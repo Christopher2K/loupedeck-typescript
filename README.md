@@ -358,7 +358,12 @@ Touch objects are emitted in the [`touchstart`](#event-touchstart), [`touchmove`
 With devenv, enter the development shell using `devenv shell`. If you use direnv, run `direnv allow` once to enter it automatically. The environment provides Node.js and the native libraries required by `canvas`.
 
 1. Install development dependencies: `npm install`
-2. Run tests: `npm test`
+2. Generate ESM JavaScript and declarations from the TypeScript sources: `npm run build`
+3. Check formatting and linting with Biome: `npm run lint`
+4. Run the compile-only public API type tests: `npm run test:types`
+5. Run the runtime tests: `npm test`
+
+Outside devenv, install the native system libraries required by `canvas` before running the drawing tests.
 
 ## Thanks
 
