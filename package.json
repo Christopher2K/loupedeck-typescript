@@ -3,11 +3,14 @@
   "version": "7.2.1",
   "description": "Loupedeck Device Interface",
   "main": "index.js",
+  "types": "index.d.ts",
   "type": "module",
   "scripts": {
+    "build": "tsc -p tsconfig.json",
     "format": "biome check --write --unsafe",
     "lint": "biome check .",
-    "test": "node --test --experimental-test-coverage --experimental-test-module-mocks"
+    "prepack": "npm run build",
+    "test": "npm run build && node --test --experimental-test-coverage --experimental-test-module-mocks"
   },
   "allowScripts": {
     "canvas": true
@@ -19,9 +22,14 @@
     "constants.js",
     "parser.js",
     "util.js",
-    "connections"
+    "*.d.ts",
+    "connections/*.js",
+    "connections/*.d.ts"
   ],
   "dependencies": {
+    "@types/node": "^26.6.6",
+    "@types/w3c-web-serial": "^1.0.9",
+    "@types/ws": "^8.18.2",
     "canvas": "^3.2.3",
     "color-rgba": "^3.1.1",
     "serialport": "^13.0.0",
@@ -50,6 +58,7 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6"
+    "@biomejs/biome": "2.6.6",
+    "typescript": "^7.0.2"
   }
 }
