@@ -363,6 +363,8 @@ With devenv, enter the development shell using `devenv shell`. If you use direnv
 4. Run the compile-only public API type tests: `npm run test:types`
 5. Run the runtime tests: `npm test`
 
+Runtime tests are TypeScript files collocated with their modules in `src/`. They compile separately into `.test-build/`; test files and utilities are excluded from `dist/` and npm packages.
+
 Outside devenv, install the native system libraries required by `canvas` before running the drawing tests.
 
 ## Thanks

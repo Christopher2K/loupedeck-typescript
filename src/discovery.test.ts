@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 import { SerialPort } from "serialport";
-import { discover, LoupedeckLive, LoupedeckLiveS } from "../dist/index.js";
+import { discover, LoupedeckLive, LoupedeckLiveS } from "./index.js";
 
 describe("Device Discovery", () => {
   it("reports if no devices found", async () => {
-    const spy = mock.method(SerialPort, "list", () => [
+    const spy = mock.method(SerialPort, "list", async () => [
       {
         path: "/dev/cu.usbmodem-222",
         manufacturer: "Apple",
@@ -19,7 +19,7 @@ describe("Device Discovery", () => {
     spy.mock.restore();
   });
   it("can auto-discover a Loupedeck Live device", async () => {
-    const spy = mock.method(SerialPort, "list", () => [
+    const spy = mock.method(SerialPort, "list", async () => [
       {
         path: "/dev/cu.usbmodem-333",
         manufacturer: "Loupedeck",
@@ -34,7 +34,7 @@ describe("Device Discovery", () => {
     spy.mock.restore();
   });
   it("can auto-discover a Loupedeck Live S device", async () => {
-    const spy = mock.method(SerialPort, "list", () => [
+    const spy = mock.method(SerialPort, "list", async () => [
       {
         path: "/dev/cu.usbmodem-444",
         manufacturer: "Loupedeck",
@@ -49,7 +49,7 @@ describe("Device Discovery", () => {
     spy.mock.restore();
   });
   it("errors on unknown devices", async () => {
-    const spy = mock.method(SerialPort, "list", () => [
+    const spy = mock.method(SerialPort, "list", async () => [
       {
         path: "/dev/cu.usbmodem-444",
         manufacturer: "Loupedeck",

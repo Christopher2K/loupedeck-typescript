@@ -1,26 +1,46 @@
 import assert from "node:assert/strict";
+import type { NetworkInterfaceInfo } from "node:os";
 import { describe, it, mock } from "node:test";
 
-import { MockSocket } from "../__mocks__/ws.js";
+import { MockSocket } from "../testing/mocks/ws.js";
+import type LoupedeckWSConnection from "./ws.js";
 
+const networkInterfaces = mock.fn<() => NodeJS.Dict<NetworkInterfaceInfo[]>>();
 mock.module("ws", { defaultExport: MockSocket });
-mock.module("node:os", { namedExports: { networkInterfaces: mock.fn() } });
-const os = await import("node:os");
-const WSConnection = (await import("../dist/connections/ws.js")).default;
+mock.module("node:os", { namedExports: { networkInterfaces } });
+const WSConnection = (await import("./ws.js")).default;
 
-const delay = (ms) => new Promise((res) => setTimeout(res, ms));
+const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-let connection;
+let connection: LoupedeckWSConnection;
 
 describe("v0.1.X Connection", () => {
   it("auto-discovers valid connections", async () => {
-    os.networkInterfaces.mock.mockImplementationOnce(() => [
-      { address: "255.255.255.255" },
-    ]);
+    networkInterfaces.mock.mockImplementationOnce(() => ({
+      test: [
+        {
+          address: "255.255.255.255",
+          family: "IPv4",
+          netmask: "",
+          mac: "",
+          internal: false,
+          cidr: null,
+        },
+      ],
+    }));
     assert.deepEqual(await WSConnection.discover(), []);
-    os.networkInterfaces.mock.mockImplementationOnce(() => [
-      { address: "100.127.80.1" },
-    ]);
+    networkInterfaces.mock.mockImplementationOnce(() => ({
+      test: [
+        {
+          address: "100.127.80.1",
+          family: "IPv4",
+          netmask: "",
+          mac: "",
+          internal: false,
+          cidr: null,
+        },
+      ],
+    }));
     assert.deepEqual(await WSConnection.discover(), [
       { connectionType: WSConnection, host: "100.127.80.1", productId: 4 },
     ]);
@@ -63,6 +83,7 @@ describe("v0.1.X Connection", () => {
   it("delegates messages", async () => {
     connection = new WSConnection();
     await connection.connect();
+    assert(connection.connection);
     const sender = mock.method(connection.connection, "send");
     const TEST_MESSAGE = Buffer.from([0x88]);
     connection.send(TEST_MESSAGE);

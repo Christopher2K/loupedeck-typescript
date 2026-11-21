@@ -2,7 +2,10 @@ import EventEmitter from "node:events";
 
 // Stand-in for a real WebSocket
 export class MockSocket extends EventEmitter {
-  constructor(url) {
+  url: string;
+  timeout: ReturnType<typeof setTimeout>;
+
+  constructor(url: string) {
     super();
     this.url = url;
     // Simulate connection attempt
@@ -16,14 +19,17 @@ export class MockSocket extends EventEmitter {
       }
     }, 10);
   }
-  close(code = 1000) {
+
+  close(code = 1000): void {
     clearTimeout(this.timeout);
     this.emit("close", code);
   }
-  send() {
+
+  send(): void {
     // do nothing
   }
-  terminate() {
+
+  terminate(): void {
     clearTimeout(this.timeout);
     this.emit("close", 1006);
   }

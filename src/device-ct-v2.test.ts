@@ -1,28 +1,32 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
-import { MockSerialPort } from "../__mocks__/serialport.js";
-
-import { MockSocket } from "../__mocks__/ws.js";
-import { assertIsPixelBuffer, delay } from "./helpers.js";
+import type { ControlId } from "./constants.js";
+import {
+  assertIsPixelBuffer,
+  delay,
+  setMockConnection,
+} from "./testing/helpers.js";
+import { MockSerialPort } from "./testing/mocks/serialport.js";
+import { MockSocket } from "./testing/mocks/ws.js";
+import type { TouchEvent } from "./types.js";
 
 mock.module("ws", { defaultExport: MockSocket });
 mock.module("serialport", {
   namedExports: { SerialPort: MockSerialPort },
 });
-const SerialConnection = (await import("../dist/connections/serial.js"))
-  .default;
-const WSConnection = (await import("../dist/connections/ws.js")).default;
-const { LoupedeckCTv2 } = await import("../dist/index.js");
+const SerialConnection = (await import("./connections/serial.js")).default;
+const WSConnection = (await import("./connections/ws.js")).default;
+const { LoupedeckCTv2 } = await import("./index.js");
 
-let device;
+let device: InstanceType<typeof LoupedeckCTv2>;
 
 describe("Commands", () => {
   beforeEach(() => {
     device = new LoupedeckCTv2({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("retrieves device information", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const promise = device.getInfo();
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -46,12 +50,12 @@ describe("Commands", () => {
     });
   });
   it("rejects retrieving device information if not connected", async () => {
-    device.connection = { send: () => {}, isReady: () => false };
+    setMockConnection(device, false);
     const promise = device.getInfo();
     await assert.rejects(promise, /not connected/i);
   });
   it("sets brightness", () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.setBrightness(0);
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -65,7 +69,7 @@ describe("Commands", () => {
     );
   });
   it("sets button color", () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.setButtonColor({ id: "enter", color: "red" });
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -74,12 +78,13 @@ describe("Commands", () => {
   });
   it("errors on unknown button passed", () => {
     assert.throws(
-      () => device.setButtonColor({ id: "triangle", color: "blue" }),
+      () =>
+        device.setButtonColor({ id: "triangle" as ControlId, color: "blue" }),
       /Invalid button/i,
     );
   });
   it("vibrates short by default", () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.vibrate();
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -87,7 +92,7 @@ describe("Commands", () => {
     );
   });
   it("vibrates a specific pattern", () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.vibrate(0x56);
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -98,10 +103,10 @@ describe("Commands", () => {
 describe("Drawing (Callback API)", () => {
   beforeEach(() => {
     device = new LoupedeckCTv2({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("writes pixels to left display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawScreen("left", (ctx, w, h) => {
       ctx.fillStyle = "#f00"; // red
       ctx.fillRect(0, 0, w, h);
@@ -129,7 +134,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels to right display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawScreen("right", (ctx, w, h) => {
       ctx.fillStyle = "#0f0"; // green
       ctx.fillRect(0, 0, w, h);
@@ -157,7 +162,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels to center display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawScreen("center", (ctx, w, h) => {
       ctx.fillStyle = "#00f"; // blue
       ctx.fillRect(0, 0, w, h);
@@ -185,7 +190,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels to knob display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawScreen("knob", (ctx, w, h) => {
       ctx.fillStyle = "#00f"; // blue
       ctx.fillRect(0, 0, w, h);
@@ -213,7 +218,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels to a specific key area", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawKey(6, (ctx, w, h) => {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, w, h);
@@ -239,7 +244,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels without refreshing the screen", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawCanvas(
       { id: "center", width: 10, height: 10, autoRefresh: false },
       () => {},
@@ -253,10 +258,10 @@ describe("Drawing (Callback API)", () => {
 describe("Drawing (Buffer API)", () => {
   beforeEach(() => {
     device = new LoupedeckCTv2({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("writes pixels to left display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(60 * 270).fill([0x00, 0xf8]);
     const buffer = Buffer.from(pixels.flat());
     device.drawScreen("left", buffer);
@@ -281,7 +286,7 @@ describe("Drawing (Buffer API)", () => {
     );
   });
   it("writes pixels to right display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(60 * 270).fill([0xe0, 0x07]);
     const buffer = Buffer.from(pixels.flat());
     device.drawScreen("right", buffer);
@@ -308,7 +313,7 @@ describe("Drawing (Buffer API)", () => {
     );
   });
   it("writes pixels to center display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(360 * 270).fill([0x1f, 0x00]);
     const buffer = Buffer.from(pixels.flat());
     device.drawScreen("center", buffer);
@@ -335,7 +340,7 @@ describe("Drawing (Buffer API)", () => {
     );
   });
   it("writes pixels to knob display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(240 * 240).fill([0x00, 0x1f]);
     const buffer = Buffer.from(pixels.flat());
     device.drawScreen("knob", buffer);
@@ -362,7 +367,7 @@ describe("Drawing (Buffer API)", () => {
     );
   });
   it("writes pixels to a specific key area", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(90 * 90 * 2).fill(0xff);
     const buffer = Buffer.from(pixels);
     device.drawKey(6, buffer);
@@ -544,7 +549,7 @@ describe("Message Parsing", () => {
     device.on("touchstart", touchstart);
     device.on("touchmove", touchmove);
     device.on("touchend", touchend);
-    let ev;
+    let ev: TouchEvent;
 
     // Multiple starts
     const TOUCH_1_START = Buffer.from("094d000001bf004c01", "hex");
@@ -607,7 +612,7 @@ describe("Connection Management", () => {
     const serialConnect = mock.method(
       SerialConnection.prototype,
       "connect",
-      function () {
+      function (this: InstanceType<typeof SerialConnection>) {
         this.emit("connect", { address: this.path });
       },
     );
@@ -663,7 +668,7 @@ describe("Connection Management", () => {
     device = new LoupedeckCTv2({ autoConnect: false, reconnectInterval: 20 });
     const connect = mock.method(device, "connect", () => {});
     device.onDisconnect("some error");
-    device.onDisconnect();
+    device.onDisconnect(undefined);
     await delay(40);
     assert.equal(connect.mock.calls.length, 0);
   });
@@ -679,13 +684,9 @@ describe("Connection Management", () => {
   });
   it("ignores commands if connection not open", () => {
     device = new LoupedeckCTv2({ path: "/dev/test3", autoConnect: false });
-    device.connection = {
-      send: () => {},
-      isReady: () => false,
-      close: () => {},
-    };
-    const sender = mock.method(device.connection, "send");
-    device.send("test", Buffer.from([0xff]));
+    setMockConnection(device, false);
+    const sender = mock.method(device.connection!, "send");
+    device.send("test" as unknown as number, Buffer.from([0xff]));
     assert.equal(sender.mock.calls.length, 0);
     device.close();
   });
@@ -717,11 +718,11 @@ describe("Connection Management", () => {
     const serialDiscovery = mock.method(SerialConnection, "discover", () => [
       { connectionType: SerialConnection, path: "/dev/test1" },
     ]);
-    let slowSerialConnection;
+    let slowSerialConnection: InstanceType<typeof SerialConnection> | undefined;
     const serialConnect = mock.method(
       SerialConnection.prototype,
       "connect",
-      function () {
+      function (this: InstanceType<typeof SerialConnection>) {
         slowSerialConnection = this;
       },
     );
@@ -737,8 +738,8 @@ describe("Connection Management", () => {
     const connect2 = device.connect();
 
     // Make the connection work
-    slowSerialConnection.emit("connect", {
-      address: slowSerialConnection.path,
+    slowSerialConnection!.emit("connect", {
+      address: slowSerialConnection!.path,
     });
 
     // Both promises should resolve
@@ -754,7 +755,7 @@ describe("Connection Management", () => {
 describe("Edge Cases", () => {
   beforeEach(() => {
     device = new LoupedeckCTv2({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("prevents transaction IDs of zero", () => {
     device.transactionID = 0xff;

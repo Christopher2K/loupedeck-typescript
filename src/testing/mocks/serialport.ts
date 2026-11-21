@@ -16,6 +16,10 @@ Sec-WebSocket-Accept: PLOTDYCXHOTMeouth==
 
 // Stand-in for a Loupedeck serial device
 export class MockSerialPort extends EventEmitter {
+  path: string | undefined;
+  isOpen: boolean;
+  timeout: ReturnType<typeof setTimeout>;
+
   static list() {
     return [
       {
@@ -36,7 +40,8 @@ export class MockSerialPort extends EventEmitter {
       },
     ];
   }
-  constructor({ path }) {
+
+  constructor({ path }: { path?: string } = {}) {
     super();
     this.path = path;
     this.isOpen = false;
@@ -46,14 +51,17 @@ export class MockSerialPort extends EventEmitter {
       this.emit("open");
     }, 10);
   }
-  close() {
+
+  close(): void {
     clearTimeout(this.timeout);
     this.emit("close");
   }
-  pipe() {
+
+  pipe(): void {
     // do nothing
   }
-  write(buff) {
+
+  write(buff: Buffer): void {
     if (buff.toString() === WS_UPGRADE_HEADER)
       this.emit("data", Buffer.from(WS_UPGRADE_RESPONSE));
   }

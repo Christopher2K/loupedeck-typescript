@@ -1,26 +1,29 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
-import { MockSerialPort } from "../__mocks__/serialport.js";
-
-import { MockSocket } from "../__mocks__/ws.js";
-import { assertIsPixelBuffer, delay } from "./helpers.js";
+import {
+  assertIsPixelBuffer,
+  delay,
+  setMockConnection,
+} from "./testing/helpers.js";
+import { MockSerialPort } from "./testing/mocks/serialport.js";
+import { MockSocket } from "./testing/mocks/ws.js";
 
 mock.module("ws", { defaultExport: MockSocket });
 mock.module("serialport", {
   namedExports: { SerialPort: MockSerialPort },
 });
 
-import { RazerStreamControllerX } from "../dist/index.js";
+import { type ControlId, RazerStreamControllerX } from "./index.js";
 
-let device;
+let device: RazerStreamControllerX;
 
 describe("Commands", () => {
   beforeEach(() => {
     device = new RazerStreamControllerX({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("retrieves device information", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const promise = device.getInfo();
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -44,12 +47,12 @@ describe("Commands", () => {
     });
   });
   it("rejects retrieving device information if not connected", async () => {
-    device.connection = { send: () => {}, isReady: () => false };
+    setMockConnection(device, false);
     const promise = device.getInfo();
     await assert.rejects(promise, /not connected/i);
   });
   it("sets brightness", () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.setBrightness(0);
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
@@ -64,7 +67,8 @@ describe("Commands", () => {
   });
   it("cannot set button color", () => {
     assert.throws(
-      () => device.setButtonColor({ id: "triangle", color: "blue" }),
+      () =>
+        device.setButtonColor({ id: "triangle" as ControlId, color: "blue" }),
       /Setting key color not available on this device/,
     );
   });
@@ -92,10 +96,10 @@ describe("Commands", () => {
 describe("Drawing (Callback API)", () => {
   beforeEach(() => {
     device = new RazerStreamControllerX({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("writes pixels to main display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawScreen("center", (ctx, w, h) => {
       ctx.fillStyle = "#00f"; // blue
       ctx.fillRect(0, 0, w, h);
@@ -123,7 +127,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels to a specific key area", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawKey(6, (ctx, w, h) => {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, w, h);
@@ -149,7 +153,7 @@ describe("Drawing (Callback API)", () => {
     );
   });
   it("writes pixels without refreshing the screen", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     device.drawCanvas(
       { id: "center", width: 10, height: 10, autoRefresh: false },
       () => {},
@@ -163,10 +167,10 @@ describe("Drawing (Callback API)", () => {
 describe("Drawing (Buffer API)", () => {
   beforeEach(() => {
     device = new RazerStreamControllerX({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("writes pixels to center display", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(480 * 288).fill([0x1f, 0x00]);
     const buffer = Buffer.from(pixels.flat());
     device.drawScreen("center", buffer);
@@ -193,7 +197,7 @@ describe("Drawing (Buffer API)", () => {
     );
   });
   it("writes pixels to a specific key area", async () => {
-    const sender = mock.method(device.connection, "send");
+    const sender = mock.method(device.connection!, "send");
     const pixels = Array(96 * 96 * 2).fill(0xff);
     const buffer = Buffer.from(pixels);
     device.drawKey(6, buffer);

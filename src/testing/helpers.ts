@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 
+import type { AnyConnection, LoupedeckDevice } from "../device.js";
+
+interface PixelBufferExpectation {
+  displayID: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export function assertIsPixelBuffer(
-  received,
-  { displayID, x, y, width, height },
-) {
+  received: Buffer,
+  { displayID, x, y, width, height }: PixelBufferExpectation,
+): void {
   assert(
     received.readUInt16BE(0) === 0xff10,
     `Header should be 0xff10, found 0x${received.readUInt16BE().toString(16)}`,
@@ -35,4 +45,16 @@ export function assertIsPixelBuffer(
   );
 }
 
-export const delay = (ms) => new Promise((res) => setTimeout(res, ms));
+export function setMockConnection(
+  device: LoupedeckDevice,
+  isReady = true,
+): void {
+  device.connection = {
+    close: () => undefined,
+    send: () => {},
+    isReady: () => isReady,
+  } as unknown as AnyConnection;
+}
+
+export const delay = (ms: number): Promise<void> =>
+  new Promise((res) => setTimeout(res, ms));

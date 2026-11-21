@@ -18,10 +18,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
     "format": "biome check --write --unsafe",
     "lint": "biome check .",
     "prepack": "npm run build",
-    "test": "npm run build && node --test --experimental-test-coverage --experimental-test-module-mocks",
+    "test": "npm run build && npm run build:test && node --test --experimental-test-coverage --experimental-test-module-mocks .test-build/*.test.js .test-build/connections/*.test.js",
     "test:types": "npm run build && tsc -p tsconfig.test-types.json"
   },
   "allowScripts": {

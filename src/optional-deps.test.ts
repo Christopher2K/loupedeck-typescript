@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
+import type { LoupedeckLiveS as LoupedeckLiveSClass } from "./index.js";
+import { setMockConnection } from "./testing/helpers.js";
 
 mock.module("canvas", {});
-const { LoupedeckLiveS } = await import("../dist/index.js");
+const { LoupedeckLiveS } = await import("./index.js");
 
-let device;
+let device: LoupedeckLiveSClass;
 describe("Optional Dependencies", () => {
   beforeEach(() => {
     device = new LoupedeckLiveS({ autoConnect: false });
-    device.connection = { send: () => {}, isReady: () => true };
+    setMockConnection(device);
   });
   it("informs the user if the canvas library is not installed", () => {
     assert.throws(

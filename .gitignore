@@ -3,5 +3,6 @@
 .direnv/
 devenv.local.nix
 node_modules
+/.test-build
 /dist
 /examples/web/dist
