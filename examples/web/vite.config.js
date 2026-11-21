@@ -1,8 +1,8 @@
-import vue from '@vitejs/plugin-vue'
+import vue from "@vitejs/plugin-vue";
 
 export default {
-    build: {
-        target: 'esnext'
-    },
-    plugins: [vue()]
-}
+  build: {
+    target: "esnext",
+  },
+  plugins: [vue()],
+};

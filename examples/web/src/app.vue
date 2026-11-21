@@ -64,144 +64,167 @@
 </template>
 
 <script setup>
-import { nextTick, reactive, ref, watch } from 'vue'
+import { Buffer } from "buffer";
+import { nextTick, reactive, ref, watch } from "vue";
 
-import { Buffer } from 'buffer'
-window.Buffer = Buffer
+window.Buffer = Buffer;
 
-import { discover, LoupedeckLive, LoupedeckLiveS, LoupedeckCT, RazerStreamController, RazerStreamControllerX } from 'loupedeck'
+import {
+  discover,
+  LoupedeckCT,
+  LoupedeckLive,
+  LoupedeckLiveS,
+  RazerStreamController,
+  RazerStreamControllerX,
+} from "loupedeck";
 
-import loupedeckButton from './components/loupedeck-button.vue'
-import loupedeckButtonSquare from './components/loupedeck-button-square.vue'
-import loupedeckKnob from './components/loupedeck-knob.vue'
-import loupedeckKnobCt from './components/loupedeck-knob-ct.vue'
+import loupedeckButton from "./components/loupedeck-button.vue";
+import loupedeckButtonSquare from "./components/loupedeck-button-square.vue";
+import loupedeckKnob from "./components/loupedeck-knob.vue";
+import loupedeckKnobCt from "./components/loupedeck-knob-ct.vue";
 
 const DEVICE_TYPES = [
-    LoupedeckCT,
-    LoupedeckLive,
-    LoupedeckLiveS,
-    RazerStreamController,
-    RazerStreamControllerX,
-]
+  LoupedeckCT,
+  LoupedeckLive,
+  LoupedeckLiveS,
+  RazerStreamController,
+  RazerStreamControllerX,
+];
 
-const connected = ref(false)
-const deviceInfo = ref()
+const connected = ref(false);
+const deviceInfo = ref();
 const state = reactive({
-    buttons: {
-        0: false,
-        1: false,
-        2: false,
-        3: false,
-        4: false,
-        5: false,
-        6: false,
-        7: false,
-        knobTL: false,
-        knobCL: false,
-        knobBL: false,
-        knobTR: false,
-        knobCR: false,
-        knobBR: false,
-    },
-    knobCT: 0,
-    knobTL: 0,
-    knobCL: 0,
-    knobBL: 0,
-    knobTR: 0,
-    knobCR: 0,
-    knobBR: 0,
-})
+  buttons: {
+    0: false,
+    1: false,
+    2: false,
+    3: false,
+    4: false,
+    5: false,
+    6: false,
+    7: false,
+    knobTL: false,
+    knobCL: false,
+    knobBL: false,
+    knobTR: false,
+    knobCR: false,
+    knobBR: false,
+  },
+  knobCT: 0,
+  knobTL: 0,
+  knobCL: 0,
+  knobBL: 0,
+  knobTR: 0,
+  knobCR: 0,
+  knobBR: 0,
+});
 
-const screenCanvas = ref()
-let screenCtx
+const screenCanvas = ref();
+let screenCtx;
 function render({ touches }) {
-    if (!screenCtx) return
-    screenCtx.clearRect(0, 0, screenCtx.canvas.width, screenCtx.canvas.height)
-    screenCtx.fillStyle = '#ffffff88'
-    for (const touch of touches) {
-        if (touch.target.screen === 'knob') continue
-        screenCtx.beginPath()
-        screenCtx.arc(touch.x, touch.y, 16, 0, 2 * Math.PI)
-        screenCtx.fill()
-    }
+  if (!screenCtx) return;
+  screenCtx.clearRect(0, 0, screenCtx.canvas.width, screenCtx.canvas.height);
+  screenCtx.fillStyle = "#ffffff88";
+  for (const touch of touches) {
+    if (touch.target.screen === "knob") continue;
+    screenCtx.beginPath();
+    screenCtx.arc(touch.x, touch.y, 16, 0, 2 * Math.PI);
+    screenCtx.fill();
+  }
 }
 
 function touchstart({ touches, changedTouches: [touch] }) {
-    // Color key when touched
-    const colors = ['#f66', '#f95', '#fb4', '#fd6', '#ff9', '#be9', '#9e9', '#9db', '#9cc', '#88c', '#c9c', '#d89']
-    if (touch.target.key !== undefined) {
-        device.drawKey(touch.target.key, (ctx, w, h) => {
-            ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)]
-            ctx.fillRect(0, 0, w, h)
-        })
-    }
-    render({ touches })
+  // Color key when touched
+  const colors = [
+    "#f66",
+    "#f95",
+    "#fb4",
+    "#fd6",
+    "#ff9",
+    "#be9",
+    "#9e9",
+    "#9db",
+    "#9cc",
+    "#88c",
+    "#c9c",
+    "#d89",
+  ];
+  if (touch.target.key !== undefined) {
+    device.drawKey(touch.target.key, (ctx, w, h) => {
+      ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
+      ctx.fillRect(0, 0, w, h);
+    });
+  }
+  render({ touches });
 }
 
-let device
+let device;
 async function request() {
-    try {
-        device = await discover()
-    } catch (e) {
-        return console.error(e.message)
-    }
+  try {
+    device = await discover();
+  } catch (e) {
+    return console.error(e.message);
+  }
 
-    device.on('connect', async() => {
-        connected.value = true
-        // Load device info
-        const info = Object.assign({}, device)
-        Object.assign(info, await device.getInfo())
-        info.id = device.constructor.name
-        deviceInfo.value = info
-        await nextTick()
-        screenCtx = screenCanvas.value.getContext('2d')
-    })
+  device.on("connect", async () => {
+    connected.value = true;
+    // Load device info
+    const info = Object.assign({}, device);
+    Object.assign(info, await device.getInfo());
+    info.id = device.constructor.name;
+    deviceInfo.value = info;
+    await nextTick();
+    screenCtx = screenCanvas.value.getContext("2d");
+  });
 
-    device.on('disconnect', () => {
-        connected.value = false
-        deviceInfo.value = null
-    })
+  device.on("disconnect", () => {
+    connected.value = false;
+    deviceInfo.value = null;
+  });
 
-    device.on('down', ({ id }) => {
-        state.buttons[id] = true
-    })
-    device.on('up', ({ id }) => {
-        state.buttons[id] = false
-    })
-    device.on('rotate', ({ id, delta }) => {
-        state[id] += delta
-    })
-    device.on('touchstart', touchstart)
-    device.on('touchmove', render)
-    device.on('touchend', render)
+  device.on("down", ({ id }) => {
+    state.buttons[id] = true;
+  });
+  device.on("up", ({ id }) => {
+    state.buttons[id] = false;
+  });
+  device.on("rotate", ({ id, delta }) => {
+    state[id] += delta;
+  });
+  device.on("touchstart", touchstart);
+  device.on("touchmove", render);
+  device.on("touchend", render);
 }
-request()
+request();
 
 async function close() {
-    if (!device) return
-    await device.close()
-    connected.value = false
-    deviceInfo.value = null
+  if (!device) return;
+  await device.close();
+  connected.value = false;
+  deviceInfo.value = null;
 }
 
 // Force override (for debugging)
-const forceDevice = ref('')
-watch(forceDevice, value => {
-    const deviceType = DEVICE_TYPES.find(t => t.name === value)
-    if (!deviceType) {
-        connected.value = false
-        deviceInfo.value = null
-        return
-    }
-    connected.value = true
-    device = new deviceType({ autoConnect: false })
-    const info = Object.assign({
-        id: value,
-        serial: 'TESTING',
-        version: 'TESTING'
-    }, device)
-    deviceInfo.value = info
-})
+const forceDevice = ref("");
+watch(forceDevice, (value) => {
+  const deviceType = DEVICE_TYPES.find((t) => t.name === value);
+  if (!deviceType) {
+    connected.value = false;
+    deviceInfo.value = null;
+    return;
+  }
+  connected.value = true;
+  device = new deviceType({ autoConnect: false });
+  const info = Object.assign(
+    {
+      id: value,
+      serial: "TESTING",
+      version: "TESTING",
+    },
+    device,
+  );
+  deviceInfo.value = info;
+});
 </script>
 
 <style lang="sass">

@@ -4,15 +4,15 @@
 
 <script setup>
 defineProps({
-    color: {
-        type: String,
-        default: 'grey'
-    },
-    pressed: {
-        type: Boolean,
-        default: false
-    }
-})
+  color: {
+    type: String,
+    default: "grey",
+  },
+  pressed: {
+    type: Boolean,
+    default: false,
+  },
+});
 </script>
 
 <style lang="sass">

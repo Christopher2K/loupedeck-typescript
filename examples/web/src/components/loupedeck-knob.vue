@@ -4,19 +4,19 @@
 
 <script setup>
 defineProps({
-    pressed: {
-        type: Boolean,
-        default: false
-    },
-    rotation: {
-        type: Number,
-        default: 0
-    }
-})
+  pressed: {
+    type: Boolean,
+    default: false,
+  },
+  rotation: {
+    type: Number,
+    default: 0,
+  },
+});
 
 // Encoder seems to have 30 indents per full revolution,
 // so 360 / 30 = 12 degrees per tick
-const DEG_PER_UNIT = 12
+const DEG_PER_UNIT = 12;
 </script>
 
 <style lang="sass">

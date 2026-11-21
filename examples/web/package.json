@@ -5,16 +5,14 @@
   "scripts": {
     "dev": "vite --force",
     "build": "vite build",
-    "lint": "eslint src"
+    "lint": "biome check src"
   },
   "type": "module",
   "author": "Ivo Janssen <hello@ivo.la>",
   "license": "MIT",
   "devDependencies": {
-    "@appliedminds/eslint-config": "^2.0.3",
+    "@biomejs/biome": "2.6.6",
     "@vitejs/plugin-vue": "^6.0.0",
-    "eslint": "^9.31.0",
-    "eslint-plugin-vue": "^10.3.0",
     "sass": "^1.89.2",
     "vite": "^7.0.5"
   },

@@ -4,19 +4,19 @@
 
 <script setup>
 defineProps({
-    label: {
-        type: String,
-        default: '',
-    },
-    color: {
-        type: String,
-        default: 'grey'
-    },
-    pressed: {
-        type: Boolean,
-        default: false
-    }
-})
+  label: {
+    type: String,
+    default: "",
+  },
+  color: {
+    type: String,
+    default: "grey",
+  },
+  pressed: {
+    type: Boolean,
+    default: false,
+  },
+});
 </script>
 
 <style lang="sass">

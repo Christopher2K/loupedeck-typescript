@@ -5,8 +5,9 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "lint": "eslint",
-    "test": "node --test  --experimental-test-coverage --experimental-test-module-mocks"
+    "format": "biome check --write --unsafe",
+    "lint": "biome check .",
+    "test": "node --test --experimental-test-coverage --experimental-test-module-mocks"
   },
   "allowScripts": {
     "canvas": true
@@ -49,7 +50,6 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "@appliedminds/eslint-config": "^2.1.1",
-    "eslint": "^10.13.0"
+    "@biomejs/biome": "2.6.6"
   }
 }
