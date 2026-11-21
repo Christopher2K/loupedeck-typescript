@@ -19,7 +19,7 @@
   "dependencies": {
     "buffer": "^6.0.3",
     "events": "^3.3.0",
-    "loupedeck": "file:../..",
+    "loupedeck-ts-sdk": "file:../..",
     "vue": "^3.5.17"
   }
 }

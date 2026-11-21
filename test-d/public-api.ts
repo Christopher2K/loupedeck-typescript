@@ -7,7 +7,7 @@ import type {
   ScreenId,
   SupportedDevice,
   Touch,
-} from "loupedeck";
+} from "loupedeck-ts-sdk";
 import {
   discover,
   HAPTIC,
@@ -16,13 +16,17 @@ import {
   LoupedeckLive,
   LoupedeckLiveS,
   RazerStreamControllerX,
-} from "loupedeck";
-import LoupedeckSerialConnection from "loupedeck/connections/serial.js";
-import LoupedeckWebSerialConnection from "loupedeck/connections/web-serial.js";
-import LoupedeckWSConnection from "loupedeck/connections/ws.js";
-import { BUTTONS, COMMANDS, MAX_BRIGHTNESS } from "loupedeck/constants.js";
-import { MagicByteLengthParser } from "loupedeck/parser.js";
-import { rgba2rgb565 } from "loupedeck/util.js";
+} from "loupedeck-ts-sdk";
+import LoupedeckSerialConnection from "loupedeck-ts-sdk/connections/serial.js";
+import LoupedeckWebSerialConnection from "loupedeck-ts-sdk/connections/web-serial.js";
+import LoupedeckWSConnection from "loupedeck-ts-sdk/connections/ws.js";
+import {
+  BUTTONS,
+  COMMANDS,
+  MAX_BRIGHTNESS,
+} from "loupedeck-ts-sdk/constants.js";
+import { MagicByteLengthParser } from "loupedeck-ts-sdk/parser.js";
+import { rgba2rgb565 } from "loupedeck-ts-sdk/util.js";
 
 function expectType<T>(value: T): T {
   return value;
@@ -92,7 +96,7 @@ expectType<ControlId>(BUTTONS[0]);
 const pattern: HapticPattern = HAPTIC.RUMBLE1;
 expectType<HapticPattern>(pattern);
 
-expectType<Promise<import("loupedeck").DiscoveredConnection[]>>(
+expectType<Promise<import("loupedeck-ts-sdk").DiscoveredConnection[]>>(
   LoupedeckDevice.list(),
 );
 expectType<Buffer>(rgba2rgb565(new Uint8ClampedArray(4), 1));

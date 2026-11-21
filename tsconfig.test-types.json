@@ -5,8 +5,8 @@
     "noEmit": true,
     "rootDir": ".",
     "paths": {
-      "loupedeck": ["./dist/index.d.ts"],
-      "loupedeck/*.js": ["./dist/*.d.ts"]
+      "loupedeck-ts-sdk": ["./dist/index.d.ts"],
+      "loupedeck-ts-sdk/*.js": ["./dist/*.d.ts"]
     }
   },
   "include": ["test-d/**/*.ts", "src/external-types.d.ts"],

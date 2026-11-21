@@ -1,6 +1,6 @@
 # Loupedeck WebSerial Example
 
-This example shows how to use the [WebSerial](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API) connector of the [`loupedeck`](https://www.npmjs.com/package/loupedeck) package to run a Loupedeck device in a browser.
+This example shows how to use the [WebSerial](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API) connector of the [`loupedeck-ts-sdk`](https://www.npmjs.com/package/loupedeck-ts-sdk) package to run a Loupedeck device in a browser.
 
 It uses [Vite](https://github.com/vitejs/vite) & [Vue 3](https://github.com/vuejs/vue-next) as a build tool and framework, but these are not necessary to use WebSerial.
 

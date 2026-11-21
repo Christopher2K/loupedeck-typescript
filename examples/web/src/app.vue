@@ -76,7 +76,7 @@ import {
   LoupedeckLiveS,
   RazerStreamController,
   RazerStreamControllerX,
-} from "loupedeck";
+} from "loupedeck-ts-sdk";
 
 import loupedeckButton from "./components/loupedeck-button.vue";
 import loupedeckButtonSquare from "./components/loupedeck-button-square.vue";

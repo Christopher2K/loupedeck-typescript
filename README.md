@@ -37,7 +37,7 @@ This library has been tested with firmware versions 0.1.2, 0.1.3, 0.1.79, 0.2.5,
 ## Installation
 
 ```shell
-npm install loupedeck
+npm install loupedeck-ts-sdk
 ```
 
 By default, Loupdeck devices uses RGB565 (16-bit) buffers for drawing (with small exceptions, see below), so the [`canvas` module](https://www.npmjs.com/package/canvas) is used to enable a more pleasant API that allows for drawing using [Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) callbacks.
@@ -49,7 +49,7 @@ _Note: Ensure Loupedeck software is not running as it may conflict with this lib
 ### Automatic Discovery
 
 ```javascript
-import { discover } from "loupedeck";
+import { discover } from "loupedeck-ts-sdk";
 
 // Detects and opens first connected device
 const device = await discover();
@@ -73,7 +73,7 @@ device.on("rotate", ({ id, delta }) => {
 ### Manual Instantiation
 
 ```javascript
-import { LoupedeckLiveS } from "loupedeck";
+import { LoupedeckLiveS } from "loupedeck-ts-sdk";
 
 const device = new LoupedeckLiveS({
   path: "/dev/tty.usbmodem101",

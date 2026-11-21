@@ -1,5 +1,5 @@
 {
-  "name": "loupedeck",
+  "name": "loupedeck-ts-sdk",
   "version": "7.2.1",
   "description": "Loupedeck Device Interface",
   "main": "./dist/index.js",
