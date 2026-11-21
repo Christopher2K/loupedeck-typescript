@@ -10,31 +10,66 @@ const DISCONNECT_CODES = {
   TIMEOUT: 1006,
 } as const;
 
+/** Events emitted by a {@link LoupedeckWSConnection}. */
 export type WSConnectionEvents = {
+  /** Emitted when the WebSocket opens. */
   connect: [info: { address: string }];
+  /** Emitted for each raw WebSocket message received. */
   message: [data: RawData | undefined];
+  /** Emitted when the WebSocket closes, with an error for abnormal timeouts. */
   disconnect: [error: Error | null];
 };
 
+/** Options for creating a WebSocket connection. */
 export interface WSConnectionOptions {
+  /** Device host name or IP address, without a URL scheme. */
   host?: string;
 }
 
+/** Describes a candidate device address found through network discovery. */
 export interface WSConnectionInfo {
+  /** Connection class used to open this address. */
   connectionType: typeof LoupedeckWSConnection;
+  /** Product identifier assigned to WebSocket discovery results. */
   productId: 0x04;
+  /** Candidate device host address. */
   host: string;
 }
 
+/**
+ * WebSocket transport for network-connected Loupedeck devices.
+ *
+ * Received messages act as keepalive ticks. Once connected, a periodic check
+ * terminates the socket when no message has arrived within
+ * {@link connectionTimeout}; close code 1006 is reported as a timeout error.
+ */
 export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEvents> {
+  /** Device host supplied at construction, without a URL scheme. */
   host: string | undefined;
+  /** Full `ws://` URL, initialized by {@link connect}. */
   address: string | undefined;
+  /** Timestamp in milliseconds of the most recently received message. */
   lastTick: number;
+  /**
+   * Maximum time in milliseconds between received messages before the socket
+   * is terminated.
+   *
+   * @defaultValue `CONNECTION_TIMEOUT` (3000 milliseconds).
+   */
   connectionTimeout: number;
+  /** Underlying WebSocket, initialized by {@link connect}. */
   connection: WebSocket | undefined;
+  /** Timer for the next keepalive check. */
   _keepAliveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Resolver for the promise returned by the current {@link connect} call. */
   _connectionResolver: (() => void) | undefined;
 
+  /**
+   * Creates an unopened WebSocket connection and initializes keepalive state.
+   *
+   * @param options - Connection options, including the device host. Defaults
+   * to an empty object.
+   */
   constructor({ host }: WSConnectionOptions = {}) {
     super();
     this.host = host;
@@ -44,7 +79,15 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     this.connectionTimeout = CONNECTION_TIMEOUT;
   }
 
-  // Automatically find Loupedeck IP by scanning network interfaces
+  /**
+   * Derives candidate device hosts from local network interface addresses.
+   *
+   * Interfaces whose addresses start with `100.127` are selected, and an
+   * address ending in `.2` is mapped to the corresponding `.1` host. Discovery
+   * is synchronous and does not probe or connect to the resulting hosts.
+   *
+   * @returns Candidate WebSocket connection descriptions.
+   */
   static discover(): WSConnectionInfo[] {
     const results: WSConnectionInfo[] = [];
     const interfaces = Object.values(networkInterfaces()).flat();
@@ -60,6 +103,13 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     return results;
   }
 
+  /**
+   * Schedules the next keepalive check and terminates the socket if the last
+   * received message is older than {@link connectionTimeout}.
+   *
+   * Checks repeat every twice the connection timeout while the socket remains
+   * connected.
+   */
   checkConnected(): void {
     this._keepAliveTimer = setTimeout(
       this.checkConnected.bind(this),
@@ -69,6 +119,12 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
       this.connection!.terminate();
   }
 
+  /**
+   * Initiates a WebSocket close handshake.
+   *
+   * @returns A promise resolving to the WebSocket close code, or `undefined`
+   * when no connection has been created.
+   */
   close(): Promise<number> | undefined {
     if (!this.connection) return;
     const closed = new Promise<number>((res) =>
@@ -78,6 +134,14 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     return closed;
   }
 
+  /**
+   * Opens a WebSocket to `ws://<host>` and registers connection, message, and
+   * close handlers.
+   *
+   * @returns A promise resolved by {@link onConnect} after the socket opens.
+   * The connection attempt itself has no separate timeout or rejection path.
+   * @throws If the WebSocket URL is invalid or the socket cannot be created.
+   */
   connect(): Promise<void> {
     this.address = `ws://${this.host}`;
     this.connection = new WebSocket(this.address);
@@ -89,6 +153,11 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     });
   }
 
+  /**
+   * Reports whether the WebSocket is fully open.
+   *
+   * @returns `true` only when the socket exists and its ready state is `OPEN`.
+   */
   isReady(): boolean {
     return (
       this.connection !== undefined &&
@@ -96,6 +165,10 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     );
   }
 
+  /**
+   * Handles socket opening by emitting `connect`, starting keepalive checks,
+   * and resolving the pending {@link connect} promise.
+   */
   onConnect(): void {
     this.emit("connect", { address: this.address! });
     this._keepAliveTimer = setTimeout(
@@ -105,6 +178,12 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     this._connectionResolver!();
   }
 
+  /**
+   * Handles socket closure, stops keepalive checks, and emits `disconnect`.
+   *
+   * @param errCode - WebSocket close code. Code 1006 produces a timeout error;
+   * all other codes produce a `null` disconnect error.
+   */
   onDisconnect(errCode: number): void {
     let error: Error | null = null;
     switch (errCode) {
@@ -115,11 +194,25 @@ export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEven
     this.emit("disconnect", error);
   }
 
+  /**
+   * Handles an incoming message by refreshing the keepalive timestamp and
+   * emitting the unmodified data as `message`.
+   *
+   * @param buff - Raw data supplied by the WebSocket implementation.
+   */
   onReceive(buff?: RawData): void {
     this.lastTick = Date.now();
     this.emit("message", buff);
   }
 
+  /**
+   * Sends a buffer directly as a WebSocket message, without adding the serial
+   * transport's length-prefixed framing.
+   *
+   * @param buff - Payload bytes to send.
+   * @throws If called before {@link connect} initializes the socket or if the
+   * socket cannot accept the message.
+   */
   send(buff: Buffer): void {
     this.connection!.send(buff);
   }

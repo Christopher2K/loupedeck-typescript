@@ -44,6 +44,8 @@ By default, Loupdeck devices uses RGB565 (16-bit) buffers for drawing (with smal
 
 ## Usage Examples
 
+Public APIs include TSDoc documentation in the generated TypeScript declarations, making parameters, return values, and errors available through editor hovers.
+
 _Note: Ensure Loupedeck software is not running as it may conflict with this library_
 
 ### Automatic Discovery

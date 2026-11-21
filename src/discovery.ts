@@ -22,6 +22,18 @@ interface SupportedDeviceConstructor {
   productId: number;
 }
 
+/**
+ * Finds the first available supported device and creates an instance for it.
+ *
+ * Serial and WebSocket connections are discovered in parallel. By default, the
+ * returned device starts connecting immediately; pass `autoConnect: false` to
+ * connect explicitly with the device's `connect()` method.
+ *
+ * @param args - Device construction and connection options. Discovered
+ * connection details take precedence over conflicting values in `args`.
+ * @returns A device instance for the first discovered connection.
+ * @throws If no devices are found or the discovered product is unsupported.
+ */
 export async function discover(
   args?: LoupedeckDeviceOptions,
 ): Promise<SupportedDevice> {

@@ -50,13 +50,18 @@ type DeviceConnectionConstructor = new (
 
 interface SerialConnectionConstructor {
   new (options: { path?: string; port?: SerialPort }): AnyConnection;
+  /** Discovers available serial or Web Serial connections. */
   discover(): Promise<Array<SerialConnectionInfo | WebSerialConnectionInfo>>;
 }
 
 interface DeviceConnection {
+  /** Opens the underlying transport. */
   connect(): Promise<void>;
+  /** Listens for a successful connection. */
   on(event: "connect", listener: (info: ConnectInfo) => void): unknown;
+  /** Listens for incoming device payloads. */
   on(event: "message", listener: (packet: Buffer) => void): unknown;
+  /** Listens for transport disconnection. */
   on(event: "disconnect", listener: (error: DisconnectReason) => void): unknown;
 }
 
@@ -81,6 +86,13 @@ try {
   // No canvas is ok, do check in `drawCanvas`
 }
 
+/**
+ * Shared interface for Loupedeck-compatible devices.
+ *
+ * Emits connection, button, rotation, and touch events. After an abnormal
+ * disconnect, reconnection is attempted unless disabled in the constructor.
+ * Use a device-specific subclass rather than instantiating this base class.
+ */
 export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
   declare displays: DisplayMap;
   declare columns: number;
@@ -99,6 +111,17 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
   connection: AnyConnection | null | undefined;
   _reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /**
+   * Discovers available serial, Web Serial, and WebSocket devices in parallel.
+   * WebSocket discovery is available only in environments that support it.
+   *
+   * @param options - Discovery filters.
+   * @param options.ignoreSerial - Skip serial and Web Serial discovery.
+   * @defaultValue `false`
+   * @param options.ignoreWebsocket - Skip WebSocket discovery.
+   * @defaultValue `false`
+   * @returns Connection descriptors for all discovered devices.
+   */
   static async list({
     ignoreSerial = false,
     ignoreWebsocket = false,
@@ -115,6 +138,22 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return rawDevices.flat();
   }
 
+  /**
+   * Creates a device interface and optionally starts connecting immediately.
+   * A serial `path` or `port` selects a serial connection; otherwise `host`
+   * selects WebSocket. With none of these options, the first discovered device
+   * is used. Initial automatic connection failures are suppressed.
+   *
+   * @param options - Connection and reconnection options.
+   * @param options.host - WebSocket host or IP address for firmware 0.1.x.
+   * @param options.path - Serial device path for firmware 0.2.x.
+   * @param options.port - Browser Web Serial port for firmware 0.2.x.
+   * @param options.autoConnect - Start a connection attempt during construction.
+   * @defaultValue `true`
+   * @param options.reconnectInterval - Milliseconds to wait before reconnecting
+   * after an abnormal disconnect, or `false` to disable automatic reconnection.
+   * @defaultValue `DEFAULT_RECONNECT_INTERVAL` (3000 ms)
+   */
   constructor({
     host,
     path,
@@ -149,11 +188,27 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     if (autoConnect) this._connectBlind();
   }
 
+  /**
+   * Closes the current transport connection.
+   *
+   * @returns A promise that settles when the close operation completes, or
+   * `undefined` if there is no current connection.
+   */
   close(): Promise<unknown> | undefined {
     if (!this.connection) return;
     return this.connection.close();
   }
 
+  /**
+   * Opens the configured connection, or discovers and connects to the first
+   * available device when no connection was configured.
+   *
+   * A successful connection emits `connect`. A failed attempt can emit
+   * `disconnect` and schedule reconnection according to `reconnectInterval`.
+   *
+   * @returns A promise that resolves when the transport connects.
+   * @throws Error If no device is found or the connection cannot be established.
+   */
   async connect(): Promise<void> {
     // Explicitly asked for a serial connection (V0.2.X)
     if (this.path || this.port)
@@ -185,12 +240,32 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return this.connection.connect();
   }
 
+  /**
+   * Attempts a connection for automatic setup or reconnection, suppressing any
+   * rejection so the attempt does not produce an unhandled rejection.
+   *
+   * @returns A promise that resolves after the attempt, whether it succeeds or fails.
+   */
   _connectBlind(): Promise<void> {
     return this.connect().catch(() => {});
   }
 
-  // Draw an arbitrary buffer to the device
-  // Buffer format must be 16bit 5-6-5 (LE, except BE for the Loupedeck CT Knob screen)
+  /**
+   * Writes a raw RGB16-565 pixel buffer to a rectangular display area.
+   * Each pixel occupies two bytes in row-major order. Buffers are little-endian
+   * except for the Loupedeck CT knob display, which requires big-endian data.
+   * Display-specific offsets are added to `x` and `y` before transmission.
+   *
+   * @param options - Target display and drawing rectangle. Width and height
+   * default to the full display; `x` and `y` default to zero.
+   * @param options.autoRefresh - Send a draw/refresh command after the write.
+   * @defaultValue `true`
+   * @param buffer - Exactly `width * height * 2` bytes of RGB16-565 pixels.
+   * @returns A promise that resolves after the write and optional refresh are
+   * acknowledged. While disconnected, commands are skipped and the promise
+   * still resolves.
+   * @throws Error If the display is unavailable or the buffer length is incorrect.
+   */
   async drawBuffer(
     { id, width, height, x = 0, y = 0, autoRefresh = true }: DrawOptions,
     buffer: Buffer,
@@ -229,7 +304,20 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     if (autoRefresh) await this.refresh(id);
   }
 
-  // Create a canvas with correct dimensions and pass back for drawing
+  /**
+   * Draws to a display area with a Canvas 2D callback, converts the result to
+   * RGB16-565, and writes it with {@link drawBuffer}. The callback runs
+   * synchronously and receives a context sized to the requested drawing area.
+   * The optional `canvas` package must be installed.
+   *
+   * @param options - Target display and drawing rectangle. Width and height
+   * default to the full display; other options are forwarded to `drawBuffer`.
+   * @param cb - Receives the 2D context, width, and height and performs drawing.
+   * @returns A promise that resolves after the write and optional refresh are
+   * acknowledged. While disconnected, commands are skipped and it still resolves.
+   * @throws Error If the display is unavailable, `canvas` is not installed, or
+   * the generated buffer is invalid. Callback exceptions also propagate.
+   */
   drawCanvas(
     { id, width, height, ...args }: DrawOptions,
     cb: DrawCallback,
@@ -264,9 +352,32 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return this.drawBuffer({ id, width, height, ...args }, buffer);
   }
 
-  // Draw to a specific key index (0-11 on Live, 0-14 on Live S)
+  /**
+   * Draws a raw pixel buffer over one key on the center display.
+   * Keys are indexed from zero in row-major order. The buffer must contain
+   * `keySize * keySize * 2` bytes of little-endian RGB16-565 pixels.
+   *
+   * @param index - Zero-based key index.
+   * @param buffer - Exactly `keySize * keySize * 2` bytes of pixel data.
+   * @returns A promise that resolves after the framebuffer write and refresh
+   * are acknowledged. While disconnected, commands are skipped and it resolves.
+   * @throws Error If the key index is invalid or the buffer length is incorrect.
+   */
   drawKey(index: number, buffer: Buffer): Promise<void>;
+  /**
+   * Draws over one key on the center display with a Canvas 2D callback.
+   * Keys are indexed from zero in row-major order; the callback receives a
+   * `keySize`-square context. The optional `canvas` package must be installed.
+   *
+   * @param index - Zero-based key index.
+   * @param callback - Receives the 2D context, width, and height and performs drawing.
+   * @returns A promise that resolves after the framebuffer write and refresh
+   * are acknowledged. While disconnected, commands are skipped and it resolves.
+   * @throws Error If the key index is invalid, `canvas` is unavailable, or the
+   * callback throws.
+   */
   drawKey(index: number, callback: DrawCallback): Promise<void>;
+  /** Dispatches key drawing to the raw-buffer or canvas implementation. */
   drawKey(index: number, cb: Buffer | DrawCallback): Promise<void> {
     // Get offset x/y for key index
     if (index < 0 || index >= this.columns * this.rows)
@@ -280,14 +391,44 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return this.drawCanvas(options, cb as DrawCallback);
   }
 
-  // Draw to a specific screen
+  /**
+   * Fills an entire screen from a raw RGB16-565 pixel buffer.
+   * The buffer must contain `display.width * display.height * 2` bytes in
+   * row-major order. Data is little-endian except on the CT knob screen, which
+   * requires big-endian data.
+   *
+   * @param id - Screen to draw; it must be available on this device.
+   * @param buffer - Full-screen RGB16-565 pixel data.
+   * @returns A promise that resolves after the framebuffer write and refresh
+   * are acknowledged. While disconnected, commands are skipped and it resolves.
+   * @throws Error If the screen is unavailable or the buffer length is incorrect.
+   */
   drawScreen(id: ScreenId, buffer: Buffer): Promise<void>;
+  /**
+   * Fills an entire screen using a Canvas 2D callback and converts the result
+   * to the screen's RGB16-565 byte order. The optional `canvas` package must be
+   * installed.
+   *
+   * @param id - Screen to draw; it must be available on this device.
+   * @param callback - Receives a full-screen 2D context, its width, and its height.
+   * @returns A promise that resolves after the framebuffer write and refresh
+   * are acknowledged. While disconnected, commands are skipped and it resolves.
+   * @throws Error If the screen is unavailable, `canvas` is unavailable, or the
+   * callback throws.
+   */
   drawScreen(id: ScreenId, callback: DrawCallback): Promise<void>;
+  /** Dispatches screen drawing to the raw-buffer or canvas implementation. */
   drawScreen(id: ScreenId, cb: Buffer | DrawCallback): Promise<void> {
     if (cb instanceof Buffer) return this.drawBuffer({ id }, cb);
     return this.drawCanvas({ id }, cb as DrawCallback);
   }
 
+  /**
+   * Requests the serial number and firmware version from the device.
+   *
+   * @returns The device serial number and firmware version string.
+   * @throws Error If the device is not connected and ready.
+   */
   async getInfo(): Promise<DeviceInfo> {
     if (!this.connection || !this.connection.isReady())
       throw new Error("Not connected!");
@@ -297,6 +438,12 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     };
   }
 
+  /**
+   * Handles a button/knob press payload and emits `down` or `up`.
+   * Payloads shorter than two bytes are ignored.
+   *
+   * @param buff - Control identifier followed by its pressed/released state.
+   */
   onButton(buff: Buffer): void {
     if (buff.length < 2) return;
     const id = BUTTONS[buff[0] as keyof typeof BUTTONS];
@@ -304,10 +451,23 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     this.emit(event, { id });
   }
 
+  /**
+   * Handles a transport connection and forwards its details as a `connect` event.
+   *
+   * @param info - Connected transport address information.
+   */
   onConnect(info: ConnectInfo): void {
     this.emit("connect", info);
   }
 
+  /**
+   * Handles transport disconnection: emits `disconnect`, clears any pending
+   * reconnect timer, and clears the current connection. Normal disconnects do
+   * not reconnect; abnormal disconnects schedule an attempt when enabled.
+   *
+   * @param error - Disconnect reason, or a nullish value for a normal close.
+   * @returns The error message for an `Error` reason; otherwise `undefined`.
+   */
   onDisconnect(error: DisconnectReason): string | undefined {
     this.emit("disconnect", error);
     clearTimeout(this._reconnectTimer);
@@ -324,6 +484,14 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return (error as Error).message;
   }
 
+  /**
+   * Decodes an incoming packet, dispatches its payload to the registered command
+   * handler, and resolves the matching pending transaction. Without a handler,
+   * the complete packet is used as the transaction response.
+   *
+   * @param buff - Raw packet containing length, command, transaction ID, and payload.
+   * @returns The command handler's response, or the original packet if unhandled.
+   */
   onReceive(buff: Buffer): PacketResponse {
     const msgLength = buff[0];
     const handler = this.handlers[buff[1]];
@@ -336,12 +504,25 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return response;
   }
 
+  /**
+   * Handles a knob rotation payload and emits `rotate` with its signed delta.
+   *
+   * @param buff - Control identifier followed by a signed rotation delta.
+   */
   onRotate(buff: Buffer): void {
     const id = BUTTONS[buff[0] as keyof typeof BUTTONS];
     const delta = buff.readInt8(1);
     this.emit("rotate", { id, delta });
   }
 
+  /**
+   * Handles a touch payload, resolves its device-specific target, updates the
+   * active-touch cache, and emits a touch event. The first move for a touch ID
+   * is emitted as `touchstart`; ended touches are removed before emission.
+   *
+   * @param event - Touch event requested by the packet handler.
+   * @param buff - Payload containing big-endian coordinates and the touch ID.
+   */
   onTouch(event: "touchstart" | "touchmove" | "touchend", buff: Buffer): void {
     const x = buff.readUInt16BE(1);
     const y = buff.readUInt16BE(3);
@@ -374,12 +555,28 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     });
   }
 
-  // Display the current framebuffer
+  /**
+   * Asks the device to display the current framebuffer for a screen.
+   *
+   * @param id - Screen to refresh.
+   * @returns A promise resolving with the command response, or `undefined` if
+   * the device is not connected and ready.
+   */
   refresh(id: ScreenId): Promise<PacketResponse> | undefined {
     const displayInfo = this.displays[id];
     return this.send(COMMANDS.DRAW, displayInfo!.id);
   }
 
+  /**
+   * Sends a low-level command and tracks its transaction response.
+   * Transaction IDs wrap around at 256 and skip zero. The packet length byte is
+   * capped at 255, although the complete header and data buffer are transmitted.
+   *
+   * @param command - Protocol command byte.
+   * @param data - Command payload.
+   * @returns A promise resolved when a packet with the transaction ID arrives,
+   * or `undefined` if the device is not connected and ready.
+   */
   send(
     command: number,
     data: Buffer = Buffer.alloc(0),
@@ -399,6 +596,15 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     });
   }
 
+  /**
+   * Sets display brightness from a normalized value.
+   * Values are clamped to the `[0, 1]` range, scaled to the device's 0–10
+   * range, and rounded to the nearest integer.
+   *
+   * @param value - Brightness from 0 (off) to 1 (full brightness).
+   * @returns A promise resolving with the command response, or `undefined` if
+   * the device is not connected and ready.
+   */
   setBrightness(value: number): Promise<PacketResponse> | undefined {
     const byte = Math.max(
       0,
@@ -407,6 +613,17 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return this.send(COMMANDS.SET_BRIGHTNESS, Buffer.from([byte]));
   }
 
+  /**
+   * Sets the RGB color of a button or knob LED.
+   * Alpha in the parsed color is ignored.
+   *
+   * @param options - LED control and color.
+   * @param options.id - Button or knob whose LED should change.
+   * @param options.color - Color string accepted by `color-rgba`.
+   * @returns A promise resolving with the command response, or `undefined` if
+   * the device is not connected and ready.
+   * @throws Error If `id` is not a known control.
+   */
   setButtonColor({
     id,
     color,
@@ -423,6 +640,14 @@ export class LoupedeckDevice extends EventEmitter<LoupedeckDeviceEvents> {
     return this.send(COMMANDS.SET_COLOR, data);
   }
 
+  /**
+   * Plays a device haptic vibration pattern.
+   *
+   * @param pattern - Haptic command byte, typically a value from `HAPTIC`.
+   * @defaultValue `HAPTIC.SHORT`
+   * @returns A promise resolving with the command response, or `undefined` if
+   * the device is not connected and ready.
+   */
   vibrate(pattern: number = HAPTIC.SHORT): Promise<PacketResponse> | undefined {
     return this.send(COMMANDS.SET_VIBRATION, Buffer.from([pattern]));
   }
@@ -438,6 +663,10 @@ type CTDisplays = LiveDisplays & {
   knob: DisplayInfo;
 };
 
+/**
+ * Loupedeck Live device with three displays and twelve 90×90 keys.
+ * Its displays share one framebuffer, addressed through display offsets.
+ */
 export class LoupedeckLive extends LoupedeckDevice {
   static productId = 0x0004;
   static vendorId = 0x2ec2;
@@ -472,7 +701,15 @@ export class LoupedeckLive extends LoupedeckDevice {
   type = "Loupedeck Live";
   override visibleX: [number, number] = [0, 480];
 
-  // Determine touch target based on x/y position
+  /**
+   * Maps a coordinate on the combined 480-pixel-wide touch surface to a target.
+   * The left and right strips map to their screens; center coordinates map to a
+   * zero-based, row-major key index.
+   *
+   * @param x - Horizontal touch coordinate.
+   * @param y - Vertical touch coordinate.
+   * @returns The touched screen, including `key` for the center display.
+   */
   getTarget(x: number, y: number): TouchTarget {
     if (x < this.displays.left.width) return { screen: "left" };
     if (x >= this.displays.left.width + this.displays.center.width)
@@ -487,7 +724,10 @@ export class LoupedeckLive extends LoupedeckDevice {
   }
 }
 
-// Rear of device says "V1.00" or "V2.00"
+/**
+ * Loupedeck CT (marked V1.00 or V2.00) with independently addressed side and
+ * center displays plus a 240×240, big-endian knob display.
+ */
 export class LoupedeckCT extends LoupedeckLive {
   static override productId = 0x0003;
   override buttons: ButtonId[] = [
@@ -525,14 +765,24 @@ export class LoupedeckCT extends LoupedeckLive {
   };
   override type = "Loupedeck CT";
 
-  // Determine touch target based on x/y position
+  /**
+   * Maps a touch to the knob or to the inherited Live screen/key layout.
+   *
+   * @param x - Horizontal touch coordinate.
+   * @param y - Vertical touch coordinate.
+   * @param id - Touch identifier; ID 0 targets the knob regardless of coordinates.
+   * @returns The knob target for ID 0, otherwise the inherited touch target.
+   */
   override getTarget(x: number, y: number, id?: number): TouchTarget {
     if (id === 0) return { screen: "knob" };
     return super.getTarget(x, y);
   }
 }
 
-// Rear of device says "V3.00"
+/**
+ * Loupedeck CT revision marked V3.00. It uses the Live shared-framebuffer
+ * layout for the center and side displays, plus the CT knob display.
+ */
 export class LoupedeckCTv2 extends LoupedeckCT {
   static override productId = 0x0007;
   // Basically the LoupedeckLive displays + knob
@@ -559,6 +809,7 @@ export class LoupedeckCTv2 extends LoupedeckCT {
   };
 }
 
+/** Loupedeck Live S with one 480×270 display and fifteen 90×90 keys. */
 export class LoupedeckLiveS extends LoupedeckDevice {
   static productId = 0x0006;
   static vendorId = 0x2ec2;
@@ -572,7 +823,14 @@ export class LoupedeckLiveS extends LoupedeckDevice {
   type = "Loupedeck Live S";
   override visibleX: [number, number] = [15, 465];
 
-  // Determine touch target based on x/y position
+  /**
+   * Maps a touch within the visible key area to a zero-based, row-major key.
+   * Coordinates outside the horizontal bounds `[15, 465)` have no target.
+   *
+   * @param x - Horizontal touch coordinate.
+   * @param y - Vertical touch coordinate.
+   * @returns A center-screen key target, or an empty target outside the visible area.
+   */
   getTarget(x: number, y: number): TouchTarget {
     if (x < this.visibleX[0] || x >= this.visibleX[1]) return {};
     const column = Math.floor((x - this.visibleX[0]) / this.keySize);
@@ -585,12 +843,18 @@ export class LoupedeckLiveS extends LoupedeckDevice {
   }
 }
 
+/** Razer Stream Controller, using the Loupedeck Live layout and protocol. */
 export class RazerStreamController extends LoupedeckLive {
   static override productId = 0x0d06;
   static override vendorId = 0x1532;
   override type = "Razer Stream Controller";
 }
 
+/**
+ * Razer Stream Controller X with one 480×288 display and fifteen 96×96 keys.
+ * Key presses also produce synthetic touch events; LED colors and vibration
+ * are not supported.
+ */
 export class RazerStreamControllerX extends LoupedeckDevice {
   static productId = 0x0d09;
   static vendorId = 0x1532;
@@ -604,7 +868,13 @@ export class RazerStreamControllerX extends LoupedeckDevice {
   override visibleX: [number, number] = [0, 480];
   override keySize = 96;
 
-  // Emit an extra touchstart event since we are touching keys
+  /**
+   * Handles a key press/release as the usual `down`/`up` event and additionally
+   * emits `touchstart`/`touchend` with a synthetic touch at the key's center.
+   * The synthetic target contains only the zero-based key index.
+   *
+   * @param buff - Key identifier followed by its pressed/released state.
+   */
   override onButton(buff: Buffer): void {
     super.onButton(buff);
     const event = buff[1] === 0x00 ? "touchstart" : "touchend";
@@ -624,12 +894,24 @@ export class RazerStreamControllerX extends LoupedeckDevice {
     });
   }
 
+  /**
+   * Unsupported on this device.
+   *
+   * @throws Error Always, because key LED colors are not available.
+   */
   override setButtonColor(options: { id: ControlId; color: string }): never;
+  /** Always throws because this device has no configurable key LEDs. */
   override setButtonColor(): never {
     throw new Error("Setting key color not available on this device!");
   }
 
+  /**
+   * Unsupported on this device.
+   *
+   * @throws Error Always, because vibration is not available.
+   */
   override vibrate(pattern?: number): never;
+  /** Always throws because this device has no vibration motor. */
   override vibrate(): never {
     throw new Error("Vibration not available on this device!");
   }

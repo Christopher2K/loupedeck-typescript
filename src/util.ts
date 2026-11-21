@@ -1,3 +1,13 @@
+/**
+ * Converts RGBA pixels to the little-endian RGB565 format used by device displays.
+ *
+ * The input must contain four bytes per pixel in red, green, blue, alpha order.
+ * Alpha values are ignored.
+ *
+ * @param rgba - RGBA pixel data.
+ * @param pixelSize - Number of pixels to convert.
+ * @returns A buffer containing two little-endian bytes per pixel.
+ */
 export function rgba2rgb565(
   rgba: ArrayLike<number>,
   pixelSize: number,
