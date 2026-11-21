@@ -10,7 +10,7 @@ mock.module("serialport", {
   namedExports: { SerialPort: MockSerialPort },
 });
 
-import { RazerStreamControllerX } from "../index.js";
+import { RazerStreamControllerX } from "../dist/index.js";
 
 let device;
 

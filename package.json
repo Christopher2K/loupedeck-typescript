@@ -2,9 +2,20 @@
   "name": "loupedeck",
   "version": "7.2.1",
   "description": "Loupedeck Device Interface",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "format": "biome check --write --unsafe",
@@ -17,15 +28,7 @@
     "canvas": true
   },
   "files": [
-    "index.js",
-    "device.js",
-    "discovery.js",
-    "constants.js",
-    "parser.js",
-    "util.js",
-    "*.d.ts",
-    "connections/*.js",
-    "connections/*.d.ts"
+    "dist"
   ],
   "dependencies": {
     "@types/node": "^26.6.6",

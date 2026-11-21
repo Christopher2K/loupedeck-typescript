@@ -3,11 +3,12 @@
   "compilerOptions": {
     "declaration": false,
     "noEmit": true,
+    "rootDir": ".",
     "paths": {
-      "loupedeck": ["./index.d.ts"],
-      "loupedeck/*.js": ["./*.d.ts"]
+      "loupedeck": ["./dist/index.d.ts"],
+      "loupedeck/*.js": ["./dist/*.d.ts"]
     }
   },
-  "include": ["test-d/**/*.ts", "external-types.d.ts"],
+  "include": ["test-d/**/*.ts", "src/external-types.d.ts"],
   "exclude": []
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 import { SerialPort } from "serialport";
-import { discover, LoupedeckLive, LoupedeckLiveS } from "../index.js";
+import { discover, LoupedeckLive, LoupedeckLiveS } from "../dist/index.js";
 
 describe("Device Discovery", () => {
   it("reports if no devices found", async () => {

@@ -166,7 +166,7 @@ Emitted when a button or knob is pressed down.
 
 Arguments:
 
-- `id`: Button ID ([see `constants.js` for possible IDs](/constants.js#L3))
+- `id`: Button ID ([see `constants.js` for possible IDs](/src/constants.ts#L3))
 
 #### Event: `'rotate'`
 
@@ -174,7 +174,7 @@ Emitted when a knob is rotated.
 
 Arguments:
 
-- `id`: Button ID ([see `constants.js` for possible IDs](/constants.js#L3))
+- `id`: Button ID ([see `constants.js` for possible IDs](/src/constants.ts#L3))
 - `delta`: Rotation direction, `-1` for counter-clockwise, `1` for clockwise.
 
 #### Event: `'touchstart'`
@@ -210,7 +210,7 @@ Emitted when a button or knob is released.
 
 Arguments:
 
-- `id`: Button ID ([see `constants.js` for possible IDs](/constants.js#L3))
+- `id`: Button ID ([see `constants.js` for possible IDs](/src/constants.ts#L3))
 
 #### `device.close() : Promise`
 
@@ -329,7 +329,7 @@ Returns a Promise which resolves once the command has been acknowledged by the d
 
 Set a button LED to a particular color. _(Unavailable on RSCX)_
 
-- `id`: Button ID (possible choices: 0-7 on _Loupedeck Live/CT/RSC_, 0-4 on _Loupedeck Live S_, [see `BUTTONS` for _Loupedeck CT_ square buttons](/constants.js#L19))
+- `id`: Button ID (possible choices: 0-7 on _Loupedeck Live/CT/RSC_, 0-4 on _Loupedeck Live S_, [see `BUTTONS` for _Loupedeck CT_ square buttons](/src/constants.ts#L19))
 - `color`: Any [valid CSS color string](https://github.com/colorjs/color-parse#parsed-strings)
 
 Returns a Promise which resolves once the command has been acknowledged by the device.
@@ -338,7 +338,7 @@ Returns a Promise which resolves once the command has been acknowledged by the d
 
 Make device vibrate. _(Unavailable on RSCX)_
 
-- `pattern`: A valid vibration pattern ([see `HAPTIC` for valid patterns](/constants.js#L57)) (default: `HAPTIC.SHORT`)
+- `pattern`: A valid vibration pattern ([see `HAPTIC` for valid patterns](/src/constants.ts#L57)) (default: `HAPTIC.SHORT`)
 
 Returns a Promise which resolves once the command has been acknowledged by the device.
 
@@ -358,7 +358,7 @@ Touch objects are emitted in the [`touchstart`](#event-touchstart), [`touchmove`
 With devenv, enter the development shell using `devenv shell`. If you use direnv, run `direnv allow` once to enter it automatically. The environment provides Node.js and the native libraries required by `canvas`.
 
 1. Install development dependencies: `npm install`
-2. Generate ESM JavaScript and declarations from the TypeScript sources: `npm run build`
+2. Generate ESM JavaScript and declarations from `src/` into `dist/`: `npm run build`
 3. Check formatting and linting with Biome: `npm run lint`
 4. Run the compile-only public API type tests: `npm run test:types`
 5. Run the runtime tests: `npm test`

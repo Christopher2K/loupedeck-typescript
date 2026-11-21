@@ -10,9 +10,10 @@ mock.module("serialport", {
   namedExports: { SerialPort: MockSerialPort },
 });
 
-const SerialConnection = (await import("../connections/serial.js")).default;
-const WSConnection = (await import("../connections/ws.js")).default;
-const { LoupedeckLive } = await import("../index.js");
+const SerialConnection = (await import("../dist/connections/serial.js"))
+  .default;
+const WSConnection = (await import("../dist/connections/ws.js")).default;
+const { LoupedeckLive } = await import("../dist/index.js");
 
 let device;
 

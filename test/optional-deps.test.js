@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
 
 mock.module("canvas", {});
-const { LoupedeckLiveS } = await import("../index.js");
+const { LoupedeckLiveS } = await import("../dist/index.js");
 
 let device;
 describe("Optional Dependencies", () => {

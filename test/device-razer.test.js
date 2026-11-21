@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
-import { RazerStreamController } from "../index.js";
+import { RazerStreamController } from "../dist/index.js";
 import { assertIsPixelBuffer, delay } from "./helpers.js";
 
 let device;

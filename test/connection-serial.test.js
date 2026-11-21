@@ -7,7 +7,8 @@ mock.module("serialport", {
   namedExports: { SerialPort: MockSerialPort },
 });
 const { SerialPort } = await import("serialport");
-const SerialConnection = (await import("../connections/serial.js")).default;
+const SerialConnection = (await import("../dist/connections/serial.js"))
+  .default;
 
 let connection;
 

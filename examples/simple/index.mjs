@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { discover } from "../../index.js";
+import { discover } from "../../dist/index.js";
 
 let loupedeck;
 while (!loupedeck) {

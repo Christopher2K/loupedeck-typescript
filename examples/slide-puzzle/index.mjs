@@ -2,7 +2,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCanvas, loadImage } from "canvas";
-import { discover } from "../../index.js";
+import { discover } from "../../dist/index.js";
 
 const device = await discover();
 

@@ -6,7 +6,7 @@ import { MockSocket } from "../__mocks__/ws.js";
 mock.module("ws", { defaultExport: MockSocket });
 mock.module("node:os", { namedExports: { networkInterfaces: mock.fn() } });
 const os = await import("node:os");
-const WSConnection = (await import("../connections/ws.js")).default;
+const WSConnection = (await import("../dist/connections/ws.js")).default;
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
