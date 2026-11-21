@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "noEmit": true,
+    "paths": {
+      "loupedeck": ["./index.d.ts"],
+      "loupedeck/*.js": ["./*.d.ts"]
+    }
+  },
+  "include": ["test-d/**/*.ts", "external-types.d.ts"],
+  "exclude": []
+}

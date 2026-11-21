@@ -10,7 +10,8 @@
     "format": "biome check --write --unsafe",
     "lint": "biome check .",
     "prepack": "npm run build",
-    "test": "npm run build && node --test --experimental-test-coverage --experimental-test-module-mocks"
+    "test": "npm run build && node --test --experimental-test-coverage --experimental-test-module-mocks",
+    "test:types": "npm run build && tsc -p tsconfig.test-types.json"
   },
   "allowScripts": {
     "canvas": true
