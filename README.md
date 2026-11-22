@@ -1,377 +1,230 @@
-# Loupedeck: Node.js Interface
+# Loupedeck TypeScript SDK
 
-![tests](https://github.com/foxxyz/loupedeck/actions/workflows/nodejs.yml/badge.svg?branch=master)
+Unofficial TypeScript SDK for Loupedeck Live, Live S, CT/CT v2, Razer Stream Controller, and Razer Stream Controller X.
 
-Unofficial Node.js API for [Loupedeck Live](https://loupedeck.com/products/loupedeck-live/), [Loupedeck Live S](https://loupedeck.com/products/loupedeck-live-s/), [Loupedeck CT](https://loupedeck.com/us/products/loupedeck-ct/) and [Razer Stream](https://www.razer.com/streaming-accessories/razer-stream-controller) controllers.
-
-![Loupedeck Live Interface](/docs/live-front-small.png?raw=true)
-![Razer Stream Controller Interface](/docs/rsc-front-small.png?raw=true)
-![Razer Stream Controller X Interface](/docs/rscx-front-small.png?raw=true)
-![Loupedeck Live S Interface](/docs/live-s-front-small.png?raw=true)
-![Loupedeck CT Interface](/docs/ct-front-small.png?raw=true)
-
-Supports:
-
-- Reading button presses
-- Reading knob turns
-- Reading touch events
-- Setting button colors
-- Setting screen brightness
-- Vibrating device
-- Writing screen graphics
+Supports button/knob input, touch input, LEDs, brightness, haptics, and RGB565 display drawing in Node.js and browser Web Serial environments.
 
 ## Requirements
 
-- Node 24+
-- Supported Devices:
-  - Loupedeck Live
-  - Loupedeck Live S
-  - Loupedeck CT
-  - Razer Stream Controller (_"RSC"_)
-  - Razer Stream Controller X (_"RSCX"_)
+- Node.js 20.19+ for the Node entry point.
+- A browser with Web Serial support and a secure context for the browser entry point.
+- ESM. CommonJS consumers can use asynchronous `import()`.
 
-This library has been tested with firmware versions 0.1.2, 0.1.3, 0.1.79, 0.2.5, 0.2.8 and 0.2.23. Other versions may work.
+Tested firmware includes 0.1.2, 0.1.3, 0.1.79, 0.2.5, 0.2.8, and 0.2.23.
 
-**Note: Firmware version 0.2.26 does not seem to work on Linux. Recommendation is to downgrade to 0.2.23 (see #30)**
+> Ensure Loupedeck's desktop software is not running; it may conflict with direct device access. Firmware 0.2.26 has known Linux issues.
 
 ## Installation
 
-```shell
+```sh
 npm install loupedeck-ts-sdk
 ```
 
-By default, Loupdeck devices uses RGB565 (16-bit) buffers for drawing (with small exceptions, see below), so the [`canvas` module](https://www.npmjs.com/package/canvas) is used to enable a more pleasant API that allows for drawing using [Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) callbacks.
+Raw drawing accepts `Uint8Array` and has no native rendering dependency. For Node canvas callbacks, install the optional peer:
 
-## Usage Examples
+```sh
+npm install canvas
+```
 
-Public APIs include TSDoc documentation in the generated TypeScript declarations, making parameters, return values, and errors available through editor hovers.
+Browser canvas callbacks use `OffscreenCanvas` or `HTMLCanvasElement` and do not need `canvas` or a global `Buffer`.
 
-_Note: Ensure Loupedeck software is not running as it may conflict with this library_
+## Quick start
 
-### Automatic Discovery
+Construction and discovery do not perform I/O. Attach listeners before explicitly connecting:
 
-```javascript
+```ts
 import { discover } from "loupedeck-ts-sdk";
 
-// Detects and opens first connected device
 const device = await discover();
 
-// Observe connect events
-device.on("connect", () => {
-  console.info("Connection successful!");
-});
-
-// React to button presses
 device.on("down", ({ id }) => {
-  console.info(`Button pressed: ${id}`);
+  console.log(`Button pressed: ${id}`);
+});
+device.on("rotate", ({ id, delta }) => {
+  console.log(`Knob ${id} rotated: ${delta}`);
 });
 
-// React to knob turns
-device.on("rotate", ({ id, delta }) => {
-  console.info(`Knob ${id} rotated: ${delta}`);
-});
+try {
+  await device.connect();
+  await device.setBrightness(0.8);
+} finally {
+  await device.close();
+}
 ```
 
-### Manual Instantiation
+Use `openDevice()` when a guaranteed-ready device is more convenient:
 
-```javascript
+```ts
+import { openDevice } from "loupedeck-ts-sdk";
+
+const device = await openDevice(); // Connected or rejects; never half-open.
+```
+
+`close()` is idempotent, cancels reconnection and outstanding commands, and makes the instance terminal. Create a new instance to connect again.
+
+## Discovery
+
+```ts
+import {
+  createDevice,
+  discover,
+  listDevices,
+  openDevice,
+} from "loupedeck-ts-sdk";
+
+const descriptors = await listDevices();
+const first = createDevice(descriptors[0]!);
+
+const liveS = await discover({
+  model: "loupedeck-live-s",
+  serialNumber: "LDD12345678",
+  transport: "node-serial",
+});
+
+await liveS.connect();
+```
+
+Discovery matches both USB vendor and product IDs, filters unsupported devices, and supports model, serial-number, and transport selectors. A partial transport discovery failure does not hide devices found through another transport; if every transport fails, discovery throws an `AggregateError`.
+
+For direct construction, supply exactly one connection selector:
+
+```ts
 import { LoupedeckLiveS } from "loupedeck-ts-sdk";
 
-const device = new LoupedeckLiveS({
-  path: "/dev/tty.usbmodem101",
-  autoConnect: false,
-});
-await device.connect();
-console.info("Connection successful!");
+const serial = new LoupedeckLiveS({ path: "/dev/tty.usbmodem101" });
+const legacy = new LoupedeckLiveS({ host: "127.100.1.1" });
+```
 
-device.on("down", ({ id }) => {
-  console.info(`Button pressed: ${id}`);
+Options:
+
+- `path`: Node serial path for firmware 0.2.x.
+- `host`: WebSocket host for firmware 0.1.x.
+- `port`: authorized Web Serial port when using the browser entry point.
+- `reconnectInterval`: delay in milliseconds, or `false` to disable reconnection. Default: `3000`.
+- `commandTimeoutMs`: acknowledgement timeout. Default: `3000`.
+
+The deprecated `autoConnect` option is ignored; constructors are always side-effect-free.
+
+## Browser Web Serial
+
+Enumeration is passive and never opens a permission chooser. Call `requestDevice()` from a user-activation handler:
+
+```ts
+import { requestDevice } from "loupedeck-ts-sdk/browser";
+
+button.addEventListener("click", async () => {
+  const device = await requestDevice();
+  device.on("down", ({ id }) => console.log(id));
+  await device.connect();
 });
 ```
 
-For all examples, see the [`examples` folder](/examples/). Running some examples requires `canvas` to be installed (see above).
+The browser entry point supports Web Serial only. Node-only serial and WebSocket modules are not included in its runtime graph.
 
-## 📝 API Docs
+## Device API
 
-### `discover() : Promise<LoupedeckDevice>`
+All commands return promises and reject when disconnected, cancelled, unsupported, or not acknowledged in time. Public asynchronous methods consistently report validation failures through rejection.
 
-Find the first connected Loupedeck device and return it.
+### Connection and information
 
-Returns an instance of `LoupedeckLive`, `LoupedeckLiveS`, `LoupedeckCT`, `RazerStreamController`, `RazerStreamControllerX`, or throws an `Error` in case none or unsupported devices are found.
+```ts
+await device.connect({ signal });
+await device.close();
+const state = device.state;
+const { serial, version } = await device.getInfo({ signal });
+```
 
-### Class `LoupedeckLive`
+`state` is `disconnected`, `connecting`, `connected`, `closing`, or `closed`.
 
-Implements and supports all methods from the [`LoupedeckDevice` interface](#interface-loupedeckdevice).
+### LEDs, brightness, and haptics
 
-#### `new LoupedeckLive({ path : String?, host : String?, port : SerialPort?, autoConnect : Boolean? })`
+```ts
+await device.setBrightness(0.5, { signal, timeoutMs: 3000 });
+await device.setButtonColor({ id: 0, color: "#09f" }, { signal });
+await device.vibrate(HAPTIC.SHORT, { signal });
+```
 
-Create a new Loupedeck Live device interface.
+`setBrightness()` accepts finite values and clamps them to `[0, 1]`. `vibrate()` accepts a `HapticPattern`. Razer Stream Controller X rejects LED and haptic operations with `UnsupportedCapabilityError`.
 
-Most use-cases should omit the `host`/`path`/`port` parameter, unless you're using multiple devices or know specifically which IP, device path, or serial port instance you want to connect to. Either use `path`, `host`, OR `port`, never multiple.
+### Capabilities
 
-- `path`: **(Firmware 0.2.X only)** Serial device path (example: `/dev/cu.ttymodem-1332` or `COM2`) (default: autodiscover)
-- `port`: **(Firmware 0.2.X only)** Web Serial [SerialPort](https://developer.mozilla.org/en-US/docs/Web/API/SerialPort) instance (default: autodiscover)
-- `host`: **(Firmware 0.1.X only)** Host or IP address to connect to (example: `127.100.1.1`) (default: autodiscover)
-- `autoConnect`: Automatically connect during construction. (default: `true`) _Set to `false` if you'd prefer to call [`connect()`](#deviceconnect--promise). yourself._
-- `reconnectInterval`: How many milliseconds to wait before attempting a reconnect after a failed connection (default: `3000`) _Set to `false` to turn off automatic reconnects._
+```ts
+const { model, buttons, knobs, screens, keyCount, keySize, leds, haptics } =
+  device.capabilities;
+```
 
-### Class `LoupedeckCT` ("V1.00 or V2.00 on rear")
+Capability arrays are immutable snapshots. Display IDs accepted by `drawScreen()` are also narrowed by concrete device class at compile time.
 
-Same interface as [`LoupedeckLive`](#class-loupedecklive).
+### Drawing
 
-### Class `LoupedeckCTv2` ("V3.00 on rear")
+Raw input is RGB565, two bytes per pixel, little-endian except for the CT knob display (big-endian).
 
-Same interface as [`LoupedeckLive`](#class-loupedecklive).
+```ts
+await device.drawKey(0, new Uint8Array(90 * 90 * 2));
+await device.drawScreen("center", pixels);
+await device.drawBuffer(
+  { id: "center", x: 0, y: 0, width: 90, height: 90 },
+  pixels,
+  { signal },
+);
+```
 
-### Class `LoupedeckLiveS`
+`drawKey()` and `drawScreen()` also accept a canvas callback:
 
-Same interface as [`LoupedeckLive`](#class-loupedecklive).
+```ts
+await device.drawKey(0, (context, width, height) => {
+  context.fillStyle = "#09f";
+  context.fillRect(0, 0, width, height);
+});
+```
 
-### Class `RazerStreamController`
+Drawing validates integer coordinates, positive dimensions, display bounds, key indices, and exact buffer length. `autoRefresh: false` is available through `drawBuffer()`/`drawCanvas()` when batching framebuffer updates.
 
-Same interface as [`LoupedeckLive`](#class-loupedecklive).
+### Events
 
-### Class `RazerStreamControllerX`
+- `connect`: `{ address }`
+- `disconnect`: `Error | undefined`
+- `down` / `up`: `{ id }`
+- `rotate`: `{ id, delta }`
+- `touchstart` / `touchmove` / `touchend`: `{ touches, changedTouches }`
+- `unknownControl`: raw numeric control information not present in the known map
+- `protocolError`: malformed incoming data
 
-Same interface as [`LoupedeckLive`](#class-loupedecklive).
+Touch targets are discriminated by `kind`:
 
-Does not implement vibration or button colors.
+```ts
+if (touch.target.kind === "key") {
+  console.log(touch.target.key);
+} else if (touch.target.kind === "screen") {
+  console.log(touch.target.screen);
+}
+```
 
-### Interface `LoupedeckDevice`
+Transient touch state is cleared on disconnect. Razer X key contacts use stable per-key synthetic touch IDs.
 
-Shared device interface. Do not instantiate this manually, use one of the above classes instead or the [`discover()` function](#discover--promiseloupedeckdevice).
+## Entry points
 
-All incoming messages are emitted as action events and can be subscribed to via `device.on()`.
+- `loupedeck-ts-sdk`: default Node SDK.
+- `loupedeck-ts-sdk/node`: explicit Node transports and canvas renderer.
+- `loupedeck-ts-sdk/browser`: Web Serial and browser canvas renderer.
+- `loupedeck-ts-sdk/protocol`: advanced protocol constants, portable frame decoder, and RGB conversion.
+- `loupedeck-ts-sdk/node-canvas`: lazy optional Node canvas adapter.
 
-### `LoupedeckDevice.list({ ignoreSerial : Boolean?, ignoreWebsocket : Boolean?} = {}) : Promise<Array>`
+The high-level API intentionally does not expose connection objects, transaction tables, or raw command handlers. Custom platform integrations can use the exported `TransportProvider` and `DeviceTransport` contracts.
 
-Static method to scan for and return a list of all detected devices. This includes ones which are already opened.
+## Errors
 
-- `ignoreSerial`: Ignore devices which operate over serial (Firmware 0.2.X) (default: false)
-- `ignoreWebsocket`: Ignore devices which operate over websocket (Firmware 0.1.X) (default: false)
+SDK errors derive from `LoupedeckError`: `NotConnectedError`, `DeviceClosedError`, `ConnectionTimeoutError`, `CommandTimeoutError`, `DisconnectedError`, `OperationAbortedError`, `UnsupportedCapabilityError`, `ProtocolError`, `InvalidArgumentError`, and `TooManyPendingRequestsError`.
 
-Device info can be directly passed on to the constructor below.
+## Development
 
-#### Event: `'connect'`
-
-Emitted when connection to the device succeeds. Includes an info object containing:
-
-- `address`: Connection address (E.G. serial path or websocket address)
-
-#### Event: `'disconnect'`
-
-Emitted when a device disconnects for any reason. First argument for the event is an `Error` object in case of an abnormal disconnect (otherwise `undefined`).
-
-#### Event: `'down'`
-
-Emitted when a button or knob is pressed down.
-
-Arguments:
-
-- `id`: Button ID ([see `constants.js` for possible IDs](/src/constants.ts#L3))
-
-#### Event: `'rotate'`
-
-Emitted when a knob is rotated.
-
-Arguments:
-
-- `id`: Button ID ([see `constants.js` for possible IDs](/src/constants.ts#L3))
-- `delta`: Rotation direction, `-1` for counter-clockwise, `1` for clockwise.
-
-#### Event: `'touchstart'`
-
-Emitted when any part of the screen is touched for the first time.
-
-Arguments:
-
-- `changedTouches`: Array of new [touches](#touch-objects) created during this event
-- `touches`: Array of all currently held [touches](#touch-objects) on screen
-
-#### Event: `'touchmove'`
-
-Emitted when a touch moves across the screen.
-
-Arguments:
-
-- `changedTouches`: Array of [touches](#touch-objects) changed during this event
-- `touches`: Array of all currently held [touches](#touch-objects) on screen
-
-#### Event: `'touchend'`
-
-Emitted when a touch is no longer detected.
-
-Arguments:
-
-- `changedTouches`: Array of [touches](#touch-objects) removed during this event
-- `touches`: Array of all currently held [touches](#touch-objects) on screen (if any)
-
-#### Event: `'up'`
-
-Emitted when a button or knob is released.
-
-Arguments:
-
-- `id`: Button ID ([see `constants.js` for possible IDs](/src/constants.ts#L3))
-
-#### `device.close() : Promise`
-
-Close device connection.
-
-Returns Promise which resolves once the device has been closed.
-
-#### `device.connect() : Promise`
-
-Manually connect. Resolves on success.
-
-#### `device.drawBuffer({ id : String, width : Number, height : Number, x? : Number, y? : Number, autoRefresh? : Boolean }, buffer : Buffer) : Promise`
-
-Draw graphics to a particular area using a RGB16-565 pixel buffer.
-
-Lower-level method if [`drawKey()`](#devicedrawkeykey--number-buffercallback--bufferfunction--promise) or [`drawScreen()`](#devicedrawscreenscreenid--string-buffercallback--bufferfunction--promise) don't meet your needs.
-
-- `id`: Screen to write to [`left`, `center`, `right`, `knob`] _(`left` and `right` available on Loupedeck Live / RSC only)_ _(`knob` available on Loupedeck CT only)_
-- `width`: Width of area to draw
-- `height`: Height of area to draw
-- `x`: Starting X offset (default: `0`)
-- `y`: Starting Y offset (default: `0`)
-- `autoRefresh`: Whether to refresh the screen after drawing (default: `true`)
-- `buffer`: RGB16-565 Buffer. Should be `width * height * 2` bytes long, with each pixel represented by 2 bytes (5 bits red, 6 bits green, 5 bits blue) in little-endian (LE). _Note: Loupedeck CT knob screen is the only exception, it uses big-endian (BE)_
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-#### `device.drawCanvas({ id : String, width : Number, height : Number, x? : Number, y? : Number, autoRefresh? : Boolean }, callback : Function) : Promise`
-
-Draw graphics to a particular area using the [Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D).
-
-Lower-level method if [`drawKey()`](#devicedrawkeykey--number-buffercallback--bufferfunction--promise) or [`drawScreen()`](#devicedrawscreenscreenid--string-buffercallback--bufferfunction--promise) don't meet your needs.
-
-- `id`: Screen to write to [`left`, `center`, `right`, `knob`] _(`left` and `right` available on Loupedeck Live / RSC only)_ _(`knob` available on Loupedeck CT only)_
-- `width`: Width of area to draw
-- `height`: Height of area to draw
-- `x`: Starting X offset (default: `0`)
-- `y`: Starting Y offset (default: `0`)
-- `autoRefresh`: Whether to refresh the screen after drawing (default: `true`)
-- `callback`: Function to handle draw calls. Receives the following arguments:
-  1. `context`: [2d canvas graphics context](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D)
-  2. `width`: Width of drawing area
-  3. `height`: Height of drawing area
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-#### `device.drawKey(key : Number, buffer/callback : Buffer/Function) : Promise`
-
-Draw graphics to a specific key.
-
-Second argument can be either a RGB16-565 buffer or a callback. Width and height of callback will typically be `90`, as keys are mostly 90x90px (_RSCX_ being the exception - those keys are 96x96px).
-
-- `key`: Key index to write to ([0-11] on _Loupedeck Live/Loupedeck CT/RSC_, [0-14] on _Loupedeck Live S_ and _RSCX_)
-- `buffer`: RGB16-565 Buffer
-- `callback`: Function to handle draw calls. Receives the following arguments:
-  1. `context`: [2d canvas graphics context](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D)
-  2. `width`: Width of drawing area
-  3. `height`: Height of drawing area
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-#### `device.drawScreen(screenID : String, buffer/callback : Buffer/Function) : Promise`
-
-Draw graphics to a specific screen. Screen sizes are as follows:
-
-Loupedeck CT:
-
-- `left`: 60x270px
-- `center`: 360x270px
-- `right`: 60x270px
-- `knob`: 240x240px _(Note: uses big-endian byte order!)_
-
-Loupedeck Live / Razer Stream Controller:
-
-- `left`: 60x270px
-- `center`: 360x270px
-- `right`: 60x270px
-
-Loupedeck Live S:
-
-- `center`: 480x270px
-
-Razer Stream Controller X:
-
-- `center`: 480x288px
-
-Second argument can be either a RGB16-565 buffer or a callback.
-
-- `screenID`: Screen to write to [`left`, `center`, `right`, `knob`] _(`left` and `right` available on Loupedeck Live and Razer Stream Controller only)_ _(`knob` available on Loupedeck CT only)_
-- `buffer`: RGB16-565 Buffer (BE for `knob`, LE otherwise)
-- `callback`: Function to handle draw calls. Receives the following arguments:
-  1. `context`: [2d canvas graphics context](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D)
-  2. `width`: Width of drawing area
-  3. `height`: Height of drawing area
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-#### `device.getInfo() : Promise`
-
-Request device information. Returns a promise resolving to object containing:
-
-- `serial`: Device serial number
-- `version`: Firmware version
-
-If the device is not connected, the promise will reject.
-
-#### `device.setBrightness(brightness : Number) : Promise`
-
-Set screen brightness.
-
-- `brightness`: Float between (0, 1) (`0` would turn the screen off, `1` for full brightness)
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-#### `device.setButtonColor({ id : String, color : String }) : Promise`
-
-Set a button LED to a particular color. _(Unavailable on RSCX)_
-
-- `id`: Button ID (possible choices: 0-7 on _Loupedeck Live/CT/RSC_, 0-4 on _Loupedeck Live S_, [see `BUTTONS` for _Loupedeck CT_ square buttons](/src/constants.ts#L19))
-- `color`: Any [valid CSS color string](https://github.com/colorjs/color-parse#parsed-strings)
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-#### `device.vibrate(pattern? : byte) : Promise`
-
-Make device vibrate. _(Unavailable on RSCX)_
-
-- `pattern`: A valid vibration pattern ([see `HAPTIC` for valid patterns](/src/constants.ts#L57)) (default: `HAPTIC.SHORT`)
-
-Returns a Promise which resolves once the command has been acknowledged by the device.
-
-### Touch Objects
-
-Touch objects are emitted in the [`touchstart`](#event-touchstart), [`touchmove`](#event-touchmove), and [`touchend`](#event-touchend) events and have the following properties:
-
-- `id`: Unique touch identifier
-- `x`: Screen X-coordinate ([0, 480])
-- `y`: Screen Y-coordinate ([0, 270])
-- `target`:
-  - `screen`: Identifier of screen this touch was detected on ([`left`, `center`, `right`, `knob`]) (`center` only on _Loupedeck Live S_, `knob` only on _Loupedeck CT_)
-  - `key`: Index of key touched ([0-11] on _Loupedeck Live/CT/RSC_, [0-14] on _Loupedeck Live S_/_RSCX_)
-
-## Contributing & Tests
-
-With devenv, enter the development shell using `devenv shell`. If you use direnv, run `direnv allow` once to enter it automatically. The environment provides Node.js and the native libraries required by `canvas`.
-
-1. Install development dependencies: `npm install`
-2. Generate ESM JavaScript and declarations from `src/` into `dist/`: `npm run build`
-3. Check formatting and linting with Biome: `npm run lint`
-4. Run the compile-only public API type tests: `npm run test:types`
-5. Run the runtime tests: `npm test`
-
-Runtime tests are TypeScript files collocated with their modules in `src/`. They compile separately into `.test-build/`; test files and utilities are excluded from `dist/` and npm packages.
-
-Outside devenv, install the native system libraries required by `canvas` before running the drawing tests.
-
-## Thanks
-
-Big thanks go out to [Max Maischein's earlier work in Perl](https://github.com/Corion/HID-LoupedeckCT) on this topic.
+```sh
+npm ci
+npm run lint
+npm run test:types
+npm run test:package
+npm test
+```
 
 ## License
 

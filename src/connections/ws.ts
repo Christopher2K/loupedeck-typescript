@@ -4,216 +4,251 @@ import type { RawData } from "ws";
 import WebSocket from "ws";
 
 import { CONNECTION_TIMEOUT } from "../constants.js";
-
-const DISCONNECT_CODES = {
-  NORMAL: 1000,
-  TIMEOUT: 1006,
-} as const;
+import {
+  asError,
+  ConnectionTimeoutError,
+  NotConnectedError,
+  OperationAbortedError,
+  ProtocolError,
+} from "../errors.js";
+import type {
+  TransportConnectOptions,
+  WSConnectionInfo,
+} from "../transport.js";
 
 /** Events emitted by a {@link LoupedeckWSConnection}. */
 export type WSConnectionEvents = {
-  /** Emitted when the WebSocket opens. */
   connect: [info: { address: string }];
-  /** Emitted for each raw WebSocket message received. */
-  message: [data: RawData | undefined];
-  /** Emitted when the WebSocket closes, with an error for abnormal timeouts. */
-  disconnect: [error: Error | null];
+  message: [data: Uint8Array];
+  disconnect: [error: Error | undefined];
 };
 
-/** Options for creating a WebSocket connection. */
 export interface WSConnectionOptions {
-  /** Device host name or IP address, without a URL scheme. */
   host?: string;
 }
 
-/** Describes a candidate device address found through network discovery. */
-export interface WSConnectionInfo {
-  /** Connection class used to open this address. */
-  connectionType: typeof LoupedeckWSConnection;
-  /** Product identifier assigned to WebSocket discovery results. */
-  productId: 0x04;
-  /** Candidate device host address. */
-  host: string;
-}
+export type { WSConnectionInfo } from "../transport.js";
 
-/**
- * WebSocket transport for network-connected Loupedeck devices.
- *
- * Received messages act as keepalive ticks. Once connected, a periodic check
- * terminates the socket when no message has arrived within
- * {@link connectionTimeout}; close code 1006 is reported as a timeout error.
- */
+/** WebSocket transport for firmware 0.1.x devices. */
 export default class LoupedeckWSConnection extends EventEmitter<WSConnectionEvents> {
-  /** Device host supplied at construction, without a URL scheme. */
   host: string | undefined;
-  /** Full `ws://` URL, initialized by {@link connect}. */
   address: string | undefined;
-  /** Timestamp in milliseconds of the most recently received message. */
   lastTick: number;
-  /**
-   * Maximum time in milliseconds between received messages before the socket
-   * is terminated.
-   *
-   * @defaultValue `CONNECTION_TIMEOUT` (3000 milliseconds).
-   */
   connectionTimeout: number;
-  /** Underlying WebSocket, initialized by {@link connect}. */
   connection: WebSocket | undefined;
-  /** Timer for the next keepalive check. */
-  _keepAliveTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Resolver for the promise returned by the current {@link connect} call. */
-  _connectionResolver: (() => void) | undefined;
 
-  /**
-   * Creates an unopened WebSocket connection and initializes keepalive state.
-   *
-   * @param options - Connection options, including the device host. Defaults
-   * to an empty object.
-   */
+  private keepAliveTimer: ReturnType<typeof setTimeout> | undefined;
+  private connectPromise: Promise<void> | undefined;
+  private closePromise: Promise<void> | undefined;
+  private connectionAbort: AbortController | undefined;
+  private connected = false;
+
   constructor({ host }: WSConnectionOptions = {}) {
     super();
     this.host = host;
-    // Track last interaction time
     this.lastTick = Date.now();
-    // How long until declaring a timed out connetion
     this.connectionTimeout = CONNECTION_TIMEOUT;
   }
 
-  /**
-   * Derives candidate device hosts from local network interface addresses.
-   *
-   * Interfaces whose addresses start with `100.127` are selected, and an
-   * address ending in `.2` is mapped to the corresponding `.1` host. Discovery
-   * is synchronous and does not probe or connect to the resulting hosts.
-   *
-   * @returns Candidate WebSocket connection descriptions.
-   */
   static discover(): WSConnectionInfo[] {
     const results: WSConnectionInfo[] = [];
-    const interfaces = Object.values(networkInterfaces()).flat();
-    for (const iface of interfaces) {
-      if (iface!.address.startsWith("100.127")) {
+    for (const iface of Object.values(networkInterfaces()).flat()) {
+      if (iface?.address.startsWith("100.127")) {
         results.push({
-          connectionType: this,
+          kind: "websocket",
+          vendorId: 0x2ec2,
           productId: 0x04,
-          host: iface!.address.replace(/.2$/, ".1"),
+          host: iface.address.replace(/\.2$/, ".1"),
         });
       }
     }
     return results;
   }
 
-  /**
-   * Schedules the next keepalive check and terminates the socket if the last
-   * received message is older than {@link connectionTimeout}.
-   *
-   * Checks repeat every twice the connection timeout while the socket remains
-   * connected.
-   */
   checkConnected(): void {
-    this._keepAliveTimer = setTimeout(
-      this.checkConnected.bind(this),
+    clearTimeout(this.keepAliveTimer);
+    if (!this.isReady()) return;
+    if (Date.now() - this.lastTick > this.connectionTimeout) {
+      this.connection!.terminate();
+      return;
+    }
+    this.keepAliveTimer = setTimeout(
+      () => this.checkConnected(),
       this.connectionTimeout * 2,
     );
-    if (Date.now() - this.lastTick > this.connectionTimeout)
-      this.connection!.terminate();
   }
 
-  /**
-   * Initiates a WebSocket close handshake.
-   *
-   * @returns A promise resolving to the WebSocket close code, or `undefined`
-   * when no connection has been created.
-   */
-  close(): Promise<number> | undefined {
-    if (!this.connection) return;
-    const closed = new Promise<number>((res) =>
-      this.connection!.once("close", res),
-    );
-    this.connection.close();
-    return closed;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.connectionAbort?.abort(new Error("Connection closed"));
+    clearTimeout(this.keepAliveTimer);
+    const socket = this.connection;
+    if (!socket) return Promise.resolve();
+    if (socket.readyState === socket.CLOSED) {
+      this.connection = undefined;
+      this.connected = false;
+      return Promise.resolve();
+    }
+
+    this.closePromise = new Promise<void>((resolve) => {
+      socket.once("close", () => resolve());
+      if (socket.readyState === socket.CONNECTING) socket.terminate();
+      else socket.close();
+    }).finally(() => {
+      if (this.connection === socket) this.connection = undefined;
+      this.connected = false;
+      this.closePromise = undefined;
+    });
+    return this.closePromise;
   }
 
-  /**
-   * Opens a WebSocket to `ws://<host>` and registers connection, message, and
-   * close handlers.
-   *
-   * @returns A promise resolved by {@link onConnect} after the socket opens.
-   * The connection attempt itself has no separate timeout or rejection path.
-   * @throws If the WebSocket URL is invalid or the socket cannot be created.
-   */
-  connect(): Promise<void> {
+  connect(options: TransportConnectOptions = {}): Promise<void> {
+    if (this.isReady()) return Promise.resolve();
+    if (this.connectPromise) return this.connectPromise;
+
+    const controller = new AbortController();
+    this.connectionAbort = controller;
+    const abort = () => controller.abort(options.signal?.reason);
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+
+    const promise = this.open({
+      ...options,
+      signal: controller.signal,
+    }).finally(() => {
+      options.signal?.removeEventListener("abort", abort);
+      if (this.connectionAbort === controller) this.connectionAbort = undefined;
+      this.connectPromise = undefined;
+    });
+    this.connectPromise = promise;
+    return promise;
+  }
+
+  private open({
+    signal,
+    timeoutMs = 3000,
+  }: TransportConnectOptions): Promise<void> {
     this.address = `ws://${this.host}`;
-    this.connection = new WebSocket(this.address);
-    this.connection.on("open", this.onConnect.bind(this));
-    this.connection.on("message", this.onReceive.bind(this));
-    this.connection.on("close", this.onDisconnect.bind(this));
-    return new Promise((res) => {
-      this._connectionResolver = res;
+    const socket = new WebSocket(this.address);
+    this.connection = socket;
+    this.connected = false;
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        fail(new ConnectionTimeoutError("WebSocket connection timed out"));
+        socket.terminate();
+      }, timeoutMs);
+      const cleanupOpening = () => {
+        clearTimeout(timer);
+        socket.off("open", onOpen);
+        socket.off("error", onOpeningError);
+        socket.off("close", onOpeningClose);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanupOpening();
+        if (this.connection === socket) this.connection = undefined;
+        reject(error);
+      };
+      const onOpen = () => {
+        if (settled) return;
+        settled = true;
+        cleanupOpening();
+        this.connected = true;
+        this.lastTick = Date.now();
+        socket.on("error", onConnectedError);
+        socket.on("message", onMessage);
+        socket.on("close", onClose);
+        this.emit("connect", { address: this.address! });
+        this.checkConnected();
+        resolve();
+      };
+      const onOpeningError = (error: Error) => fail(error);
+      const onOpeningClose = (code: number) =>
+        fail(
+          new NotConnectedError(`WebSocket closed before opening (${code})`),
+        );
+      const onAbort = () => {
+        fail(new OperationAbortedError(undefined, { cause: signal?.reason }));
+        socket.terminate();
+      };
+      const onConnectedError = (error: Error) => {
+        if (!this.connected) return;
+        this.connected = false;
+        clearTimeout(this.keepAliveTimer);
+        this.emit("disconnect", error);
+      };
+      const onMessage = (data: RawData) => {
+        this.lastTick = Date.now();
+        try {
+          this.emit("message", normalizeRawData(data));
+        } catch (error) {
+          onConnectedError(asError(error, "Invalid WebSocket message"));
+          socket.terminate();
+        }
+      };
+      const onClose = (code: number, reason: Buffer) => {
+        clearTimeout(this.keepAliveTimer);
+        const wasConnected = this.connected;
+        this.connected = false;
+        if (this.connection === socket) this.connection = undefined;
+        socket.off("error", onConnectedError);
+        socket.off("message", onMessage);
+        socket.off("close", onClose);
+        if (!wasConnected) return;
+        if (code === 1000) {
+          this.emit("disconnect", undefined);
+        } else {
+          const detail = reason.toString();
+          this.emit(
+            "disconnect",
+            new NotConnectedError(
+              `WebSocket disconnected abnormally (${code})${detail ? `: ${detail}` : ""}`,
+            ),
+          );
+        }
+      };
+
+      socket.once("open", onOpen);
+      socket.once("error", onOpeningError);
+      socket.once("close", onOpeningClose);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
   }
 
-  /**
-   * Reports whether the WebSocket is fully open.
-   *
-   * @returns `true` only when the socket exists and its ready state is `OPEN`.
-   */
+  /** Record a keepalive tick and optionally decode a message. */
+  onReceive(data?: RawData): void {
+    this.lastTick = Date.now();
+    if (data !== undefined) this.emit("message", normalizeRawData(data));
+  }
+
   isReady(): boolean {
     return (
+      this.connected &&
       this.connection !== undefined &&
       this.connection.readyState === this.connection.OPEN
     );
   }
 
-  /**
-   * Handles socket opening by emitting `connect`, starting keepalive checks,
-   * and resolving the pending {@link connect} promise.
-   */
-  onConnect(): void {
-    this.emit("connect", { address: this.address! });
-    this._keepAliveTimer = setTimeout(
-      this.checkConnected.bind(this),
-      this.connectionTimeout * 2,
-    );
-    this._connectionResolver!();
+  async send(buff: Uint8Array): Promise<void> {
+    const socket = this.connection;
+    if (!socket || !this.isReady()) throw new NotConnectedError();
+    await new Promise<void>((resolve, reject) => {
+      socket.send(buff, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
+}
 
-  /**
-   * Handles socket closure, stops keepalive checks, and emits `disconnect`.
-   *
-   * @param errCode - WebSocket close code. Code 1006 produces a timeout error;
-   * all other codes produce a `null` disconnect error.
-   */
-  onDisconnect(errCode: number): void {
-    let error: Error | null = null;
-    switch (errCode) {
-      case DISCONNECT_CODES.TIMEOUT:
-        error = new Error("Connection timeout - was the device disconnected?");
-    }
-    clearTimeout(this._keepAliveTimer);
-    this.emit("disconnect", error);
-  }
-
-  /**
-   * Handles an incoming message by refreshing the keepalive timestamp and
-   * emitting the unmodified data as `message`.
-   *
-   * @param buff - Raw data supplied by the WebSocket implementation.
-   */
-  onReceive(buff?: RawData): void {
-    this.lastTick = Date.now();
-    this.emit("message", buff);
-  }
-
-  /**
-   * Sends a buffer directly as a WebSocket message, without adding the serial
-   * transport's length-prefixed framing.
-   *
-   * @param buff - Payload bytes to send.
-   * @throws If called before {@link connect} initializes the socket or if the
-   * socket cannot accept the message.
-   */
-  send(buff: Buffer): void {
-    this.connection!.send(buff);
-  }
+function normalizeRawData(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (Array.isArray(data)) return Buffer.concat(data);
+  throw new ProtocolError("Unsupported WebSocket message data");
 }

@@ -14,13 +14,13 @@ Sec-WebSocket-Accept: PLOTDYCXHOTMeouth==
 
 `;
 
-// Stand-in for a Loupedeck serial device
+// Stand-in for a Loupedeck serial device.
 export class MockSerialPort extends EventEmitter {
   path: string | undefined;
   isOpen: boolean;
   timeout: ReturnType<typeof setTimeout>;
 
-  static list() {
+  static async list() {
     return [
       {
         path: "/dev/cu.usbmodem-222",
@@ -45,24 +45,43 @@ export class MockSerialPort extends EventEmitter {
     super();
     this.path = path;
     this.isOpen = false;
-    // Simulate connection attempt
-    this.timeout = setTimeout(() => {
-      this.isOpen = true;
-      this.emit("open");
-    }, 10);
+    this.timeout = setTimeout(
+      () => {
+        if (this.path === "open-error") {
+          this.emit("error", new Error("open failed"));
+          return;
+        }
+        this.isOpen = true;
+        this.emit("open");
+      },
+      this.path === "slow-open" ? 30 : 10,
+    );
   }
 
-  close(): void {
+  close(callback?: (error?: Error | null) => void): void {
     clearTimeout(this.timeout);
-    this.emit("close");
+    this.isOpen = false;
+    queueMicrotask(() => {
+      callback?.(null);
+      this.emit("close");
+    });
   }
 
-  pipe(): void {
-    // do nothing
+  pipe(parser: { write(chunk: Buffer): unknown }): unknown {
+    this.on("data", (chunk: Buffer) => parser.write(chunk));
+    return parser;
   }
 
-  write(buff: Buffer): void {
-    if (buff.toString() === WS_UPGRADE_HEADER)
-      this.emit("data", Buffer.from(WS_UPGRADE_RESPONSE));
+  write(buff: Buffer, callback?: (error?: Error | null) => void): boolean {
+    queueMicrotask(() => {
+      callback?.(null);
+      if (
+        this.path !== "no-handshake" &&
+        buff.toString() === WS_UPGRADE_HEADER
+      ) {
+        this.emit("data", Buffer.from(WS_UPGRADE_RESPONSE));
+      }
+    });
+    return true;
   }
 }

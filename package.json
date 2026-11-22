@@ -7,12 +7,32 @@
   "type": "module",
   "exports": {
     ".": {
+      "browser": {
+        "types": "./dist/browser.d.ts",
+        "default": "./dist/browser.js"
+      },
+      "node": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./*.js": {
-      "types": "./dist/*.d.ts",
-      "default": "./dist/*.js"
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./node-canvas": {
+      "types": "./dist/node-canvas.d.ts",
+      "default": "./dist/node-canvas.js"
     },
     "./package.json": "./package.json"
   },
@@ -23,7 +43,8 @@
     "lint": "biome check .",
     "prepack": "npm run build",
     "test": "npm run build && npm run build:test && node --test --experimental-test-coverage --experimental-test-module-mocks .test-build/*.test.js .test-build/connections/*.test.js",
-    "test:types": "npm run build && tsc -p tsconfig.test-types.json"
+    "test:types": "npm run build && tsc -p tsconfig.test-types.json && tsc -p tsconfig.browser-types.json",
+    "test:package": "npm run build && node scripts/test-package.mjs"
   },
   "allowScripts": {
     "canvas": true
@@ -33,9 +54,7 @@
   ],
   "dependencies": {
     "@types/node": "^26.6.6",
-    "@types/w3c-web-serial": "^1.0.9",
     "@types/ws": "^8.18.2",
-    "canvas": "^3.2.3",
     "color-rgba": "^3.1.1",
     "serialport": "^13.0.0",
     "strict-event-emitter": "^0.5.1",
@@ -49,9 +68,13 @@
     "controller",
     "websocket"
   ],
-  "browser": {
-    "serialport": false,
-    "ws": false
+  "peerDependencies": {
+    "canvas": "^3.2.3"
+  },
+  "peerDependenciesMeta": {
+    "canvas": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",
@@ -60,10 +83,12 @@
   "author": "Ivo Janssen <hello@ivo.la>",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",
+    "@types/w3c-web-serial": "^1.0.9",
+    "canvas": "^3.2.3",
     "typescript": "^7.0.2"
   }
 }

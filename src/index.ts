@@ -7,25 +7,12 @@ export type {
   NumericButtonId,
 } from "./constants.js";
 export { HAPTIC } from "./constants.js";
-export * from "./device.js";
-export type { SupportedDevice } from "./discovery.js";
-export { discover } from "./discovery.js";
+export * from "./errors.js";
+export * from "./node.js";
 export type {
-  ButtonEvent,
-  ConnectInfo,
-  DeviceInfo,
-  DisconnectReason,
-  DisplayInfo,
-  DisplayMap,
-  DrawCallback,
-  DrawOptions,
-  ListOptions,
-  LoupedeckDeviceEvents,
-  LoupedeckDeviceOptions,
-  PacketResponse,
-  RotateEvent,
-  ScreenId,
-  Touch,
-  TouchEvent,
-  TouchTarget,
-} from "./types.js";
+  DeviceTransport,
+  TransportConnectOptions,
+  TransportProvider,
+  TransportSelector,
+} from "./transport.js";
+export type * from "./types.js";

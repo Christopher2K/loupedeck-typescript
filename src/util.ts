@@ -1,27 +1,28 @@
-/**
- * Converts RGBA pixels to the little-endian RGB565 format used by device displays.
- *
- * The input must contain four bytes per pixel in red, green, blue, alpha order.
- * Alpha values are ignored.
- *
- * @param rgba - RGBA pixel data.
- * @param pixelSize - Number of pixels to convert.
- * @returns A buffer containing two little-endian bytes per pixel.
- */
+import { InvalidArgumentError } from "./errors.js";
+
+/** Convert RGBA pixels to little-endian RGB565 bytes. */
 export function rgba2rgb565(
   rgba: ArrayLike<number>,
-  pixelSize: number,
-): Buffer {
-  const output = Buffer.alloc(pixelSize * 2);
-  // Convert from RGBA to RGB16_565
-  for (let i = 0; i < pixelSize * 4; i += 4) {
-    const red = rgba[i];
-    const green = rgba[i + 1];
-    const blue = rgba[i + 2];
-    let color = blue >> 3;
-    color |= (green & 0xfc) << 3;
-    color |= (red & 0xf8) << 8;
-    output.writeUInt16LE(color, i / 2);
+  pixelSize = rgba.length / 4,
+): Uint8Array {
+  if (
+    !Number.isInteger(pixelSize) ||
+    pixelSize < 0 ||
+    rgba.length !== pixelSize * 4
+  ) {
+    throw new InvalidArgumentError(
+      "RGBA input must contain four values per pixel",
+    );
+  }
+  const output = new Uint8Array(pixelSize * 2);
+  for (let index = 0; index < pixelSize * 4; index += 4) {
+    const red = rgba[index]!;
+    const green = rgba[index + 1]!;
+    const blue = rgba[index + 2]!;
+    const color = (blue >> 3) | ((green & 0xfc) << 3) | ((red & 0xf8) << 8);
+    const offset = index / 2;
+    output[offset] = color & 0xff;
+    output[offset + 1] = (color >>> 8) & 0xff;
   }
   return output;
 }

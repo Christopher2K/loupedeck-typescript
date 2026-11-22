@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
-import { type ControlId, RazerStreamController } from "./index.js";
+import { type ControlId, HAPTIC, RazerStreamController } from "./index.js";
 import {
   assertIsPixelBuffer,
+  bytesFromHex,
   delay,
+  getMockConnection,
+  receivePacket,
   setMockConnection,
+  toHex,
 } from "./testing/helpers.js";
 
 let device: RazerStreamController;
@@ -15,24 +19,19 @@ describe("Commands", () => {
     setMockConnection(device);
   });
   it("retrieves device information", async () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     const promise = device.getInfo();
-    assert.deepEqual(
-      sender.mock.calls[0].arguments[0],
-      Buffer.from("030301", "hex"),
-    );
-    device.onReceive(
+    assert.deepEqual(sender.mock.calls[0].arguments[0], bytesFromHex("030301"));
+    receivePacket(
+      device,
       Buffer.from(
-        "1f0301525a32313031303133303030333936373030313338413030303120",
+        "1e0301525a32313031303133303030333936373030313338413030303120",
         "hex",
       ),
     );
     await delay(20);
-    assert.deepEqual(
-      sender.mock.calls[1].arguments[0],
-      Buffer.from("030702", "hex"),
-    );
-    device.onReceive(Buffer.from("0c0702000208050000000000", "hex"));
+    assert.deepEqual(sender.mock.calls[1].arguments[0], bytesFromHex("030702"));
+    receivePacket(device, bytesFromHex("0c0702000208050000000000"));
     assert.deepEqual(await promise, {
       version: "0.2.8",
       serial: "RZ2101013000396700138A0001",
@@ -41,51 +40,50 @@ describe("Commands", () => {
   it("rejects retrieving device information if not connected", async () => {
     setMockConnection(device, false);
     const promise = device.getInfo();
-    assert.rejects(promise, /not connected/i);
+    await assert.rejects(promise, /not connected/i);
   });
   it("sets brightness", () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     device.setBrightness(0);
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
-      Buffer.from("04090100", "hex"),
+      bytesFromHex("04090100"),
     );
     device.setBrightness(1);
     // 0x0b should be max brightness
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("0409020a", "hex"),
+      bytesFromHex("0409020a"),
     );
   });
   it("sets button color", () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     device.setButtonColor({ id: 4, color: "red" });
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
-      Buffer.from("0702010bff0000", "hex"),
+      bytesFromHex("0702010bff0000"),
     );
   });
-  it("errors on unknown button passed", () => {
-    assert.throws(
-      () =>
-        device.setButtonColor({ id: "triangle" as ControlId, color: "blue" }),
+  it("errors on unknown button passed", async () => {
+    await assert.rejects(
+      device.setButtonColor({ id: "triangle" as ControlId, color: "blue" }),
       /Invalid button/,
     );
   });
   it("vibrates short by default", () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     device.vibrate();
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
-      Buffer.from("041b0101", "hex"),
+      bytesFromHex("041b0101"),
     );
   });
   it("vibrates a specific pattern", () => {
-    const sender = mock.method(device.connection!, "send");
-    device.vibrate(0x56);
+    const sender = mock.method(getMockConnection(device), "send");
+    device.vibrate(HAPTIC.REV_SLOWEST);
     assert.deepEqual(
       sender.mock.calls[0].arguments[0],
-      Buffer.from("041b0156", "hex"),
+      bytesFromHex("041b015e"),
     );
   });
 });
@@ -95,8 +93,8 @@ describe("Drawing (Callback API)", () => {
     setMockConnection(device);
   });
   it("writes pixels to left display", async () => {
-    const sender = mock.method(device.connection!, "send");
-    device.drawScreen("left", (ctx, w, h) => {
+    const sender = mock.method(getMockConnection(device), "send");
+    await device.drawScreen("left", (ctx, w, h) => {
       ctx.fillStyle = "#f00"; // red
       ctx.fillRect(0, 0, w, h);
     });
@@ -110,21 +108,18 @@ describe("Drawing (Callback API)", () => {
       width: 60,
       height: 270,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      pixels,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), pixels);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels to right display", async () => {
-    const sender = mock.method(device.connection!, "send");
-    device.drawScreen("right", (ctx, w, h) => {
+    const sender = mock.method(getMockConnection(device), "send");
+    await device.drawScreen("right", (ctx, w, h) => {
       ctx.fillStyle = "#0f0"; // green
       ctx.fillRect(0, 0, w, h);
     });
@@ -138,21 +133,18 @@ describe("Drawing (Callback API)", () => {
       width: 60,
       height: 270,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      pixels,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), pixels);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels to center display", async () => {
-    const sender = mock.method(device.connection!, "send");
-    device.drawScreen("center", (ctx, w, h) => {
+    const sender = mock.method(getMockConnection(device), "send");
+    await device.drawScreen("center", (ctx, w, h) => {
       ctx.fillStyle = "#00f"; // blue
       ctx.fillRect(0, 0, w, h);
     });
@@ -166,21 +158,18 @@ describe("Drawing (Callback API)", () => {
       width: 360,
       height: 270,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      pixels,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), pixels);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels to a specific key area", async () => {
-    const sender = mock.method(device.connection!, "send");
-    device.drawKey(6, (ctx, w, h) => {
+    const sender = mock.method(getMockConnection(device), "send");
+    await device.drawKey(6, (ctx, w, h) => {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, w, h);
     });
@@ -192,26 +181,23 @@ describe("Drawing (Callback API)", () => {
       width: 90,
       height: 90,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      pixels,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), pixels);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels without refreshing the screen", async () => {
-    const sender = mock.method(device.connection!, "send");
-    device.drawCanvas(
+    const sender = mock.method(getMockConnection(device), "send");
+    await device.drawCanvas(
       { id: "center", width: 10, height: 10, autoRefresh: false },
       () => {},
     );
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.equal(sender.mock.calls.length, 1);
   });
@@ -222,10 +208,10 @@ describe("Drawing (Buffer API)", () => {
     setMockConnection(device);
   });
   it("writes pixels to left display", async () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     const pixels = Array(60 * 270).fill([0x00, 0xf8]);
     const buffer = Buffer.from(pixels.flat());
-    device.drawScreen("left", buffer);
+    await device.drawScreen("left", buffer);
     const hex = "00f8".repeat(60 * 270);
     assertIsPixelBuffer(sender.mock.calls[0].arguments[0], {
       displayID: 0x004d,
@@ -234,23 +220,20 @@ describe("Drawing (Buffer API)", () => {
       width: 60,
       height: 270,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      hex,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), hex);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels to right display", async () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     const pixels = Array(60 * 270).fill([0xe0, 0x07]);
     const buffer = Buffer.from(pixels.flat());
-    device.drawScreen("right", buffer);
+    await device.drawScreen("right", buffer);
     // Color format is 5-6-5 16-bit RGB
     // so middle 6 bits for full green is 0x07e0, or 0xe007 in LE
     const hex = "e007".repeat(60 * 270);
@@ -261,23 +244,20 @@ describe("Drawing (Buffer API)", () => {
       width: 60,
       height: 270,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      hex,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), hex);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels to center display", async () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     const pixels = Array(360 * 270).fill([0x1f, 0x00]);
     const buffer = Buffer.from(pixels.flat());
-    device.drawScreen("center", buffer);
+    await device.drawScreen("center", buffer);
     // Color format is 5-6-5 16-bit RGB
     // so last 5 bits for full blue is 0x001f, or 0x1f00 in LE
     const hex = "1f00".repeat(360 * 270);
@@ -288,23 +268,20 @@ describe("Drawing (Buffer API)", () => {
       width: 360,
       height: 270,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      hex,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), hex);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("writes pixels to a specific key area", async () => {
-    const sender = mock.method(device.connection!, "send");
+    const sender = mock.method(getMockConnection(device), "send");
     const pixels = Array(90 * 90 * 2).fill(0xff);
     const buffer = Buffer.from(pixels);
-    device.drawKey(6, buffer);
+    await device.drawKey(6, buffer);
     const hex = "ffff".repeat(90 * 90);
     assertIsPixelBuffer(sender.mock.calls[0].arguments[0], {
       displayID: 0x004d,
@@ -313,16 +290,13 @@ describe("Drawing (Buffer API)", () => {
       width: 90,
       height: 90,
     });
-    assert.equal(
-      sender.mock.calls[0].arguments[0].slice(13).toString("hex"),
-      hex,
-    );
+    assert.equal(toHex(sender.mock.calls[0].arguments[0].subarray(13)), hex);
     // Confirm write
-    device.onReceive(Buffer.from("041001", "hex"));
+    receivePacket(device, bytesFromHex("031001"));
     await delay(10);
     assert.deepEqual(
       sender.mock.calls[1].arguments[0],
-      Buffer.from("050f02004d", "hex"),
+      bytesFromHex("050f02004d"),
     );
   });
   it("reports an error if the buffer is the wrong size", async () => {

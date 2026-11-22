@@ -48,13 +48,13 @@
             />
         </div>
         <loupedeck-knob-ct
-            v-if="deviceInfo.id === 'LoupedeckCT'"
+            v-if="['loupedeck-ct', 'loupedeck-ct-v2'].includes(deviceInfo.id)"
             :rotation="state.knobCT"
         />
         <div class="screen">
-            <div v-for="idx in (deviceInfo.columns * deviceInfo.rows)" :key="idx" />
-            <div v-if="deviceInfo.displays.left" class="left" />
-            <div v-if="deviceInfo.displays.right" class="right" />
+            <div v-for="idx in deviceInfo.keyCount" :key="idx" />
+            <div v-if="deviceInfo.screens.includes('left')" class="left" />
+            <div v-if="deviceInfo.screens.includes('right')" class="right" />
             <canvas width="480" height="270" ref="screenCanvas" />
         </div>
     </div>
@@ -64,19 +64,16 @@
 </template>
 
 <script setup>
-import { Buffer } from "buffer";
-import { nextTick, reactive, ref, watch } from "vue";
-
-window.Buffer = Buffer;
-
 import {
-  discover,
   LoupedeckCT,
+  LoupedeckCTv2,
   LoupedeckLive,
   LoupedeckLiveS,
   RazerStreamController,
   RazerStreamControllerX,
-} from "loupedeck-ts-sdk";
+  requestDevice,
+} from "loupedeck-ts-sdk/browser";
+import { nextTick, reactive, ref, watch } from "vue";
 
 import loupedeckButton from "./components/loupedeck-button.vue";
 import loupedeckButtonSquare from "./components/loupedeck-button-square.vue";
@@ -85,6 +82,7 @@ import loupedeckKnobCt from "./components/loupedeck-knob-ct.vue";
 
 const DEVICE_TYPES = [
   LoupedeckCT,
+  LoupedeckCTv2,
   LoupedeckLive,
   LoupedeckLiveS,
   RazerStreamController,
@@ -150,10 +148,12 @@ function touchstart({ touches, changedTouches: [touch] }) {
     "#d89",
   ];
   if (touch.target.key !== undefined) {
-    device.drawKey(touch.target.key, (ctx, w, h) => {
-      ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
-      ctx.fillRect(0, 0, w, h);
-    });
+    device
+      .drawKey(touch.target.key, (ctx, w, h) => {
+        ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
+        ctx.fillRect(0, 0, w, h);
+      })
+      .catch(console.error);
   }
   render({ touches });
 }
@@ -161,7 +161,7 @@ function touchstart({ touches, changedTouches: [touch] }) {
 let device;
 async function request() {
   try {
-    device = await discover();
+    device = await requestDevice();
   } catch (e) {
     return console.error(e.message);
   }
@@ -169,9 +169,9 @@ async function request() {
   device.on("connect", async () => {
     connected.value = true;
     // Load device info
-    const info = Object.assign({}, device);
-    Object.assign(info, await device.getInfo());
-    info.id = device.constructor.name;
+    const info = { ...device.capabilities, ...(await device.getInfo()) };
+    info.type = device.type;
+    info.id = device.model;
     deviceInfo.value = info;
     await nextTick();
     screenCtx = screenCanvas.value.getContext("2d");
@@ -194,8 +194,13 @@ async function request() {
   device.on("touchstart", touchstart);
   device.on("touchmove", render);
   device.on("touchend", render);
+  try {
+    await device.connect();
+  } catch (error) {
+    console.error(error);
+    await device.close();
+  }
 }
-request();
 
 async function close() {
   if (!device) return;

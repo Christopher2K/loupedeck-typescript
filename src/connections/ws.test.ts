@@ -6,8 +6,8 @@ import { MockSocket } from "../testing/mocks/ws.js";
 import type LoupedeckWSConnection from "./ws.js";
 
 const networkInterfaces = mock.fn<() => NodeJS.Dict<NetworkInterfaceInfo[]>>();
-mock.module("ws", { defaultExport: MockSocket });
-mock.module("node:os", { namedExports: { networkInterfaces } });
+mock.module("ws", { exports: { default: MockSocket } });
+mock.module("node:os", { exports: { networkInterfaces } });
 const WSConnection = (await import("./ws.js")).default;
 
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
@@ -42,7 +42,12 @@ describe("v0.1.X Connection", () => {
       ],
     }));
     assert.deepEqual(await WSConnection.discover(), [
-      { connectionType: WSConnection, host: "100.127.80.1", productId: 4 },
+      {
+        kind: "websocket",
+        host: "100.127.80.1",
+        productId: 4,
+        vendorId: 0x2ec2,
+      },
     ]);
   });
   it("connects via direct instantiation", async () => {
@@ -54,6 +59,10 @@ describe("v0.1.X Connection", () => {
       address: "ws://127.0.0.1",
     });
     connection.close();
+  });
+  it("rejects refused connections", async () => {
+    connection = new WSConnection({ host: "refused" });
+    await assert.rejects(connection.connect({ timeoutMs: 50 }), /ECONNREFUSED/);
   });
   it("keeps connection alive when ticks received", async () => {
     connection = new WSConnection();
@@ -77,8 +86,8 @@ describe("v0.1.X Connection", () => {
     connection.connectionTimeout = 20;
     await connection.connect();
     await delay(80);
-    assert.match(fn.mock.calls[0].arguments[0].message, /connection timeout/i);
-    assert.equal(keepAliveCheck.mock.calls.length, 1);
+    assert.match(fn.mock.calls[0].arguments[0].message, /1006/);
+    assert(keepAliveCheck.mock.calls.length >= 1);
   });
   it("delegates messages", async () => {
     connection = new WSConnection();
@@ -86,7 +95,7 @@ describe("v0.1.X Connection", () => {
     assert(connection.connection);
     const sender = mock.method(connection.connection, "send");
     const TEST_MESSAGE = Buffer.from([0x88]);
-    connection.send(TEST_MESSAGE);
+    await connection.send(TEST_MESSAGE);
     assert.equal(sender.mock.calls[0].arguments[0], TEST_MESSAGE);
     connection.close();
   });

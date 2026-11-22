@@ -12,10 +12,10 @@ describe("Optional Dependencies", () => {
     device = new LoupedeckLiveS({ autoConnect: false });
     setMockConnection(device);
   });
-  it("informs the user if the canvas library is not installed", () => {
-    assert.throws(
-      () => device.drawKey(6, () => {}),
-      /using callbacks requires the `canvas` library/i,
+  it("informs the user if the canvas library is not installed", async () => {
+    await assert.rejects(
+      device.drawKey(6, () => {}),
+      /Canvas drawing.*optional 'canvas' package/i,
     );
   });
 });

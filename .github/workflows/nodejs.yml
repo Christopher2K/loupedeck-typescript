@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20.x, 22.x, 24.x, latest]
+        node-version: [20.19.0, 22.x, 24.x, latest]
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js ${{ matrix.node-version }}
@@ -25,6 +25,11 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test:types
+      - run: npm run test:package
       - run: npm test
+      - run: npm ci
+        working-directory: examples/web
+      - run: npm run build
+        working-directory: examples/web
         env:
           CI: true

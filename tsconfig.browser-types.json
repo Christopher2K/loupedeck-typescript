@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["w3c-web-serial"],
+    "skipLibCheck": false,
+    "paths": {
+      "loupedeck-ts-sdk/browser": ["./dist/browser.d.ts"]
+    }
+  },
+  "include": ["test-d/browser-api.ts"],
+  "exclude": []
+}

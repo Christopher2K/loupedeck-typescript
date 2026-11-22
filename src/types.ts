@@ -1,7 +1,27 @@
-import type { CanvasRenderingContext2D } from "canvas";
-import type { ControlId } from "./constants.js";
+import type { ButtonId, ControlId, KnobId } from "./constants.js";
+import type {
+  DiscoveredConnection,
+  TransportProvider,
+  WebSerialPortLike,
+} from "./transport.js";
 
 export type ScreenId = "left" | "center" | "right" | "knob";
+
+export type DeviceModel =
+  | "loupedeck-live"
+  | "loupedeck-live-s"
+  | "loupedeck-ct"
+  | "loupedeck-ct-v2"
+  | "razer-stream-controller"
+  | "razer-stream-controller-x";
+
+export type DeviceDescriptor = DiscoveredConnection & { model: DeviceModel };
+
+export interface DeviceSelector {
+  serialNumber?: string;
+  model?: DeviceModel;
+  transport?: DiscoveredConnection["kind"];
+}
 
 export interface ConnectInfo {
   address: string | undefined;
@@ -13,7 +33,7 @@ export interface DeviceInfo {
 }
 
 export interface DisplayInfo {
-  id: Buffer;
+  id: Uint8Array;
   width: number;
   height: number;
   offset?: [x: number, y: number];
@@ -37,31 +57,81 @@ export type DrawCallback = (
   height: number,
 ) => void;
 
+export type CanvasRenderer = (
+  width: number,
+  height: number,
+  callback: DrawCallback,
+) => Uint8Array | Promise<Uint8Array>;
+
+export type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "closing"
+  | "closed";
+
+export interface ConnectOptions {
+  signal?: AbortSignal;
+}
+
+export interface CommandOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export interface DiscoverOptions
+  extends LoupedeckDeviceOptions,
+    DeviceSelector,
+    ListOptions {}
+
 export interface LoupedeckDeviceOptions {
   host?: string;
   path?: string;
-  port?: SerialPort;
+  port?: WebSerialPortLike;
+  /** @deprecated Constructors never perform I/O; call connect() explicitly. */
   autoConnect?: boolean;
   reconnectInterval?: number | false;
+  commandTimeoutMs?: number;
+  transportProvider?: TransportProvider;
+  descriptor?: DiscoveredConnection;
+  canvasRenderer?: CanvasRenderer;
 }
 
 export interface ListOptions {
   ignoreSerial?: boolean;
   ignoreWebsocket?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ButtonEvent {
-  id: ControlId | undefined;
+  id: ControlId;
 }
 
 export interface RotateEvent {
-  id: ControlId | undefined;
+  id: ControlId;
   delta: number;
 }
 
-export interface TouchTarget {
-  screen?: ScreenId;
-  key?: number;
+export interface UnknownControlEvent {
+  command: number;
+  controlId: number;
+  data: Uint8Array;
+}
+
+export type TouchTarget =
+  | { kind: "screen"; screen: ScreenId; key?: never }
+  | { kind: "key"; screen?: "center"; key: number }
+  | { kind: "none"; screen?: never; key?: never };
+
+export interface DeviceCapabilities {
+  readonly model: DeviceModel;
+  readonly buttons: readonly ButtonId[];
+  readonly knobs: readonly KnobId[];
+  readonly screens: readonly ScreenId[];
+  readonly keyCount: number;
+  readonly keySize: number;
+  readonly leds: boolean;
+  readonly haptics: boolean;
 }
 
 export interface Touch {
@@ -76,11 +146,13 @@ export interface TouchEvent {
   changedTouches: [Touch];
 }
 
-export type DisconnectReason = Error | Event | string | null | undefined;
+export type DisconnectReason = Error | undefined;
 
 export type LoupedeckDeviceEvents = {
   connect: [info: ConnectInfo];
   disconnect: [error: DisconnectReason];
+  protocolError: [error: Error];
+  unknownControl: [event: UnknownControlEvent];
   down: [event: ButtonEvent];
   up: [event: ButtonEvent];
   rotate: [event: RotateEvent];
@@ -89,7 +161,6 @@ export type LoupedeckDeviceEvents = {
   touchend: [event: TouchEvent];
 };
 
-export type PacketResponse = Buffer | string | undefined;
+export type PacketResponse = Uint8Array | string | undefined;
 // biome-ignore lint/suspicious/noConfusingVoidType: Event handlers can return without a response.
-export type PacketHandler = (payload: Buffer) => PacketResponse | void;
-export type TransactionResolver = (response: PacketResponse) => void;
+export type PacketHandler = (payload: Uint8Array) => PacketResponse | void;

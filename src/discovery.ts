@@ -1,52 +1,104 @@
+import { NotConnectedError } from "./errors.js";
+import type { DiscoveredConnection, TransportProvider } from "./transport.js";
 import type {
-  LoupedeckCT,
-  LoupedeckCTv2,
-  LoupedeckLive,
-  LoupedeckLiveS,
-  RazerStreamController,
-  RazerStreamControllerX,
-} from "./device.js";
-import * as ALL_DEVICES from "./device.js";
-import type { LoupedeckDeviceOptions } from "./types.js";
+  DeviceDescriptor,
+  DeviceModel,
+  DiscoverOptions,
+  ListOptions,
+  LoupedeckDeviceOptions,
+} from "./types.js";
 
-export type SupportedDevice =
-  | LoupedeckLive
-  | LoupedeckLiveS
-  | LoupedeckCT
-  | LoupedeckCTv2
-  | RazerStreamController
-  | RazerStreamControllerX;
-
-interface SupportedDeviceConstructor {
-  new (options?: LoupedeckDeviceOptions): SupportedDevice;
+export interface DeviceDefinition<T> {
+  model: DeviceModel;
   productId: number;
+  vendorId: number;
+  DeviceClass: new (options?: LoupedeckDeviceOptions) => T;
 }
 
-/**
- * Finds the first available supported device and creates an instance for it.
- *
- * Serial and WebSocket connections are discovered in parallel. By default, the
- * returned device starts connecting immediately; pass `autoConnect: false` to
- * connect explicitly with the device's `connect()` method.
- *
- * @param args - Device construction and connection options. Discovered
- * connection details take precedence over conflicting values in `args`.
- * @returns A device instance for the first discovered connection.
- * @throws If no devices are found or the discovered product is unsupported.
- */
-export async function discover(
-  args?: LoupedeckDeviceOptions,
-): Promise<SupportedDevice> {
-  const devices = await ALL_DEVICES.LoupedeckDevice.list();
-  if (devices.length === 0) throw new Error("No devices found");
-  const { productId, ...connectArgs } = devices[0];
-  const deviceType = (
-    Object.values(ALL_DEVICES) as SupportedDeviceConstructor[]
-  ).find((dev) => dev.productId === productId);
-  if (!deviceType)
-    throw new Error(
-      `Device with product ID ${productId} not yet supported! Please file an issue at https://github.com/foxxyz/loupedeck/issues`,
+export async function listSupportedDevices<T>(
+  provider: TransportProvider,
+  definitions: readonly DeviceDefinition<T>[],
+  options: ListOptions = {},
+): Promise<DeviceDescriptor[]> {
+  const discovered = await provider.discover(options);
+  const devices: DeviceDescriptor[] = [];
+  for (const descriptor of discovered) {
+    const definition = definitions.find(
+      (candidate) =>
+        candidate.vendorId === descriptor.vendorId &&
+        candidate.productId === descriptor.productId,
     );
-  const device = new deviceType({ ...args, ...connectArgs });
-  return device;
+    if (definition) devices.push({ ...descriptor, model: definition.model });
+  }
+  return devices;
+}
+
+export function createFromDescriptor<T>(
+  descriptor: DeviceDescriptor,
+  definitions: readonly DeviceDefinition<T>[],
+  options: LoupedeckDeviceOptions = {},
+): T {
+  const definition = definitions.find(
+    (candidate) =>
+      candidate.model === descriptor.model &&
+      candidate.vendorId === descriptor.vendorId &&
+      candidate.productId === descriptor.productId,
+  );
+  if (!definition) {
+    throw new NotConnectedError(
+      `Unsupported device ${descriptor.vendorId}:${descriptor.productId}`,
+    );
+  }
+  return new definition.DeviceClass({ ...options, descriptor });
+}
+
+export async function discoverDevice<T>(
+  provider: TransportProvider,
+  definitions: readonly DeviceDefinition<T>[],
+  options: DiscoverOptions = {},
+): Promise<T> {
+  const devices = await listSupportedDevices(provider, definitions, options);
+  const descriptor = devices.find(
+    (candidate) =>
+      (options.serialNumber === undefined ||
+        candidate.serialNumber === options.serialNumber) &&
+      (options.model === undefined || candidate.model === options.model) &&
+      (options.transport === undefined || candidate.kind === options.transport),
+  );
+  if (!descriptor) {
+    throw new NotConnectedError(
+      devices.length ? "No matching devices found" : "No devices found",
+    );
+  }
+  return createFromDescriptor(descriptor, definitions, options);
+}
+
+export async function openDiscoveredDevice<
+  T extends { connect(): Promise<void> },
+>(
+  provider: TransportProvider,
+  definitions: readonly DeviceDefinition<T>[],
+  options: DiscoverOptions = {},
+): Promise<T> {
+  const device = await discoverDevice(provider, definitions, options);
+  try {
+    await device.connect();
+    return device;
+  } catch (error) {
+    if ("close" in device && typeof device.close === "function") {
+      await device.close().catch(() => {});
+    }
+    throw error;
+  }
+}
+
+export function descriptorId(descriptor: DiscoveredConnection): string {
+  switch (descriptor.kind) {
+    case "node-serial":
+      return `${descriptor.kind}:${descriptor.path}`;
+    case "websocket":
+      return `${descriptor.kind}:${descriptor.host}`;
+    case "web-serial":
+      return `${descriptor.kind}:${descriptor.vendorId}:${descriptor.productId}:${descriptor.serialNumber ?? "unknown"}`;
+  }
 }

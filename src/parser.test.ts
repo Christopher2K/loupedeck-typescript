@@ -31,16 +31,18 @@ describe("MagicByteLengthParser", () => {
       Buffer.alloc(0x11).fill(0xff),
     );
   });
-  it("flushes on end", () => {
+  it("reports incomplete frames on end", async () => {
     const parser = new MagicByteLengthParser({ magicByte: 0xff });
     const fn = mock.fn();
     parser.on("data", fn);
     parser.write(Buffer.from([0xff, 0x03, 0x00]));
     assert.equal(fn.mock.calls.length, 0);
-    parser.end();
-    assert.deepEqual(
-      fn.mock.calls[0].arguments[0],
-      Buffer.from([0xff, 0x03, 0x00]),
-    );
+    await new Promise<void>((resolve) => {
+      parser.on("error", (error: Error) => {
+        assert.match(error.message, /incomplete frame/i);
+        resolve();
+      });
+      parser.end();
+    });
   });
 });

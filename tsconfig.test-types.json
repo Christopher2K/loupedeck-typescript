@@ -4,11 +4,16 @@
     "declaration": false,
     "noEmit": true,
     "rootDir": ".",
+    "types": ["node"],
+    "skipLibCheck": false,
     "paths": {
       "loupedeck-ts-sdk": ["./dist/index.d.ts"],
-      "loupedeck-ts-sdk/*.js": ["./dist/*.d.ts"]
+      "loupedeck-ts-sdk/node": ["./dist/node.d.ts"],
+      "loupedeck-ts-sdk/browser": ["./dist/browser.d.ts"],
+      "loupedeck-ts-sdk/protocol": ["./dist/protocol.d.ts"],
+      "loupedeck-ts-sdk/node-canvas": ["./dist/node-canvas.d.ts"]
     }
   },
-  "include": ["test-d/**/*.ts", "src/external-types.d.ts"],
+  "include": ["test-d/public-api.ts"],
   "exclude": []
 }

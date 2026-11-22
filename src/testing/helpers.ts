@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 
-import type { AnyConnection, LoupedeckDevice } from "../device.js";
+import { readUint16BE } from "../bytes.js";
+import type { LoupedeckDevice } from "../device.js";
+import type { DeviceTransport } from "../transport.js";
+import type { PacketResponse } from "../types.js";
 
 interface PixelBufferExpectation {
   displayID: number;
@@ -11,49 +14,81 @@ interface PixelBufferExpectation {
 }
 
 export function assertIsPixelBuffer(
-  received: Buffer,
+  received: Uint8Array,
   { displayID, x, y, width, height }: PixelBufferExpectation,
 ): void {
   assert(
-    received.readUInt16BE(0) === 0xff10,
-    `Header should be 0xff10, found 0x${received.readUInt16BE().toString(16)}`,
+    readUint16BE(received, 0) === 0xff10,
+    `Header should be 0xff10, found 0x${readUint16BE(received, 0).toString(16)}`,
   );
-  assert(
-    received.readUInt16BE(3) === displayID,
-    `Display ID should be ${displayID}, but found 0x${received.readUInt16BE(3).toString(16)}`,
+  assert.equal(readUint16BE(received, 3), displayID, "Display ID");
+  assert.equal(readUint16BE(received, 5), x, "X coordinate");
+  assert.equal(readUint16BE(received, 7), y, "Y coordinate");
+  assert.equal(readUint16BE(received, 9), width, "Width");
+  assert.equal(readUint16BE(received, 11), height, "Height");
+  assert.equal(received.length, 13 + width * height * 2, "Buffer length");
+}
+
+export function bytesFromHex(hex: string): Uint8Array {
+  return new Uint8Array(Buffer.from(hex, "hex"));
+}
+
+export function toHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+    "hex",
   );
-  assert(
-    received.readUInt16BE(5) === x,
-    `X coordinate should be ${x}, but found ${received.readUInt16BE(5)}`,
-  );
-  assert(
-    received.readUInt16BE(7) === y,
-    `Y coordinate should be ${y}, but found ${received.readUInt16BE(7)}`,
-  );
-  assert(
-    received.readUInt16BE(9) === width,
-    `Width should be ${width}, but found ${received.readUInt16BE(9)}`,
-  );
-  assert(
-    received.readUInt16BE(11) === height,
-    `Height should be ${height}, but found ${received.readUInt16BE(11)}`,
-  );
-  const correctLength = 13 + width * height * 2;
-  assert(
-    received.length === correctLength,
-    `Buffer length should be ${correctLength}, but found ${received.length}`,
-  );
+}
+
+interface DeviceInternals {
+  connection: DeviceTransport | null | undefined;
+  onReceive(packet: Uint8Array): PacketResponse;
+  generation: number;
+  handleDisconnect(error: Error | undefined, generation: number): void;
+}
+
+function internals(device: LoupedeckDevice): DeviceInternals {
+  return device as unknown as DeviceInternals;
 }
 
 export function setMockConnection(
   device: LoupedeckDevice,
   isReady = true,
 ): void {
-  device.connection = {
-    close: () => undefined,
-    send: () => {},
+  internals(device).connection = {
+    close: () => Promise.resolve(),
+    connect: () => Promise.resolve(),
+    on: () => undefined,
+    send: (packet: Uint8Array) => {
+      const command = packet[1]!;
+      if (command === 0x03 || command === 0x07) return Promise.resolve();
+      queueMicrotask(() => {
+        receivePacket(device, Uint8Array.from([3, command, packet[2]!]));
+      });
+      return Promise.resolve();
+    },
     isReady: () => isReady,
-  } as unknown as AnyConnection;
+  };
+}
+
+export function getMockConnection(device: LoupedeckDevice): DeviceTransport {
+  const connection = internals(device).connection;
+  assert(connection);
+  return connection;
+}
+
+export function receivePacket(
+  device: LoupedeckDevice,
+  packet: Uint8Array,
+): PacketResponse {
+  return internals(device).onReceive(packet);
+}
+
+export function disconnectMockDevice(
+  device: LoupedeckDevice,
+  error?: Error,
+): void {
+  const internal = internals(device);
+  internal.handleDisconnect(error, internal.generation);
 }
 
 export const delay = (ms: number): Promise<void> =>

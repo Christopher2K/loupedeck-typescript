@@ -6,7 +6,7 @@ It uses [Vite](https://github.com/vitejs/vite) & [Vue 3](https://github.com/vuej
 
 ## Requirements
 
-- Node 20+
+- Node 20.19+
 - Supported Browsers
   - Google Chrome 89+
   - Microsoft Edge 89+

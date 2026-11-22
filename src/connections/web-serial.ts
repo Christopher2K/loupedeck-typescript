@@ -1,6 +1,26 @@
-/** biome-ignore-all lint/suspicious/noAssignInExpressions: Preserve the frame-scanning loop behavior. */
-
 import { Emitter as EventEmitter } from "strict-event-emitter";
+
+import {
+  concatBytes,
+  decodeText,
+  encodeText,
+  writeUint32BE,
+} from "../bytes.js";
+import {
+  asError,
+  ConnectionTimeoutError,
+  DeviceClosedError,
+  DisconnectedError,
+  NotConnectedError,
+  OperationAbortedError,
+  ProtocolError,
+} from "../errors.js";
+import { MagicByteLengthDecoder } from "../frame-decoder.js";
+import type {
+  TransportConnectOptions,
+  WebSerialConnectionInfo,
+  WebSerialPortLike,
+} from "../transport.js";
 
 const WS_UPGRADE_HEADER = `GET /index.html
 HTTP/1.1
@@ -10,194 +30,66 @@ Sec-WebSocket-Key: 123abc
 
 `;
 const WS_UPGRADE_RESPONSE = "HTTP/1.1";
+const MAX_HANDSHAKE_BYTES = 16 * 1024;
+const VENDOR_IDS = [0x2ec2, 0x1532];
 
-/**
- * Transform-stream adapter that extracts length-prefixed payloads from serial
- * byte chunks.
- *
- * The byte following each `magicByte` is the unsigned payload length. Partial
- * frames remain buffered between chunks; bytes before a delimiter are
- * discarded once that frame is emitted.
- */
-class MagicByteLengthParser implements Transformer<Uint8Array, Buffer> {
-  /** Bytes retained because no complete frame has yet been parsed. */
-  buffer: Buffer;
-  /** Byte value that marks the start of a frame. */
-  delimiter: number;
-
-  /**
-   * Creates an empty frame parser.
-   *
-   * @param options - Parser options.
-   * @param options.magicByte - Byte value marking the start of each frame.
-   */
-  constructor({ magicByte }: { magicByte: number }) {
-    this.buffer = Buffer.alloc(0);
-    this.delimiter = magicByte;
-  }
-
-  /**
-   * Parses a chunk together with any previously buffered bytes and enqueues
-   * every complete frame payload.
-   *
-   * @param chunk - Next bytes received from the serial stream.
-   * @param controller - Transform controller used to enqueue payload buffers.
-   */
-  transform(
-    chunk: Uint8Array,
-    controller: TransformStreamDefaultController<Buffer>,
-  ): void {
-    let data = Buffer.concat([this.buffer, chunk]);
-    let position: number;
-    while ((position = data.indexOf(this.delimiter)) !== -1) {
-      // We need to at least be able to read the length byte
-      if (data.length < position + 2) break;
-      const nextLength = data[position + 1];
-      // Make sure we have enough bytes to meet this length
-      const expectedEnd = position + nextLength + 2;
-      if (data.length < expectedEnd) break;
-      controller.enqueue(data.slice(position + 2, expectedEnd));
-      data = data.slice(expectedEnd);
-    }
-    this.buffer = data;
-  }
-
-  /**
-   * Enqueues any bytes left in the buffer when the input stream ends,
-   * including an incomplete or unframed trailing sequence.
-   *
-   * @param controller - Transform controller used to enqueue the final buffer.
-   */
-  flush(controller: TransformStreamDefaultController<Buffer>): void {
-    controller.enqueue(this.buffer);
-  }
-}
-
-/**
- * Reads a Web Serial port and yields payloads from `0x82`-delimited frames.
- *
- * Errors encountered while reading are logged and end iteration rather than
- * being rethrown. The transformed stream's reader lock is always released.
- *
- * @param port - Open Web Serial port with a readable stream.
- * @param options - Read pipeline options.
- * @param options.signal - Abort signal forwarded to the stream pipeline.
- * @yields Payload buffers extracted from complete incoming frames.
- * @returns An async generator that finishes when the stream closes or aborts.
- */
-async function* read(
-  port: SerialPort,
-  { signal }: { signal: AbortSignal },
-): AsyncGenerator<Buffer, void, unknown> {
-  const transformer = new TransformStream<Uint8Array, Buffer>(
-    new MagicByteLengthParser({ magicByte: 0x82 }),
-  );
-  const transformed = port.readable!.pipeThrough(transformer, { signal });
-  const reader = transformed.getReader();
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      yield value;
-    }
-  } catch (error) {
-    console.error("error", error);
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-/** Events emitted by a {@link LoupedeckWebSerialConnection}. */
 export type WebSerialConnectionEvents = {
-  /** Emitted after the serial handshake and read pipeline are initialized. */
   connect: [info: { address: "web" }];
-  /** Emitted for each payload extracted from an incoming length-prefixed frame. */
-  message: [data: Buffer];
-  /** Emitted for a browser port disconnect or a forwarded serial error. */
-  disconnect: [reason: Event | Error];
-  /** Emitted when the background read loop finishes, including after close. */
-  readEnd: [];
+  message: [data: Uint8Array];
+  disconnect: [reason: Error | undefined];
 };
 
-/** Options for creating a browser Web Serial connection. */
 export interface WebSerialConnectionOptions {
-  /** Authorized Web Serial port to use. */
-  port: SerialPort;
+  port: WebSerialPortLike;
 }
 
-/** Describes a Web Serial port selected or authorized in the browser. */
-export interface WebSerialConnectionInfo {
-  /** Connection class used to open this port. */
-  connectionType: typeof LoupedeckWebSerialConnection;
-  /** Browser Web Serial port object. */
-  port: SerialPort;
-  /** USB product ID, when exposed by the browser. */
-  productId: number | undefined;
-  /** USB vendor ID, when exposed by the browser. */
-  vendorId: number | undefined;
-}
+export type { WebSerialConnectionInfo } from "../transport.js";
 
-/**
- * Browser Web Serial transport for Loupedeck and Razer devices.
- *
- * The connection opens an authorized port at 256,000 baud, performs the serial
- * WebSocket-upgrade handshake, and reads `0x82`-delimited frames on a
- * background async pipeline. Closing aborts that pipeline before closing the
- * port.
- */
+/** Browser Web Serial transport with deterministic stream ownership. */
 export default class LoupedeckWebSerialConnection extends EventEmitter<WebSerialConnectionEvents> {
-  /** Web Serial port supplied at construction. */
-  port: SerialPort;
-  /** Writer for the port's writable stream, initialized by {@link connect}. */
-  writer: WritableStreamDefaultWriter<Uint8Array> | undefined;
-  /** Controller used by {@link close} to abort the read pipeline. */
-  aborter: AbortController | undefined;
-  /** Parsed incoming stream consumed by the background {@link read} loop. */
-  readStream: AsyncGenerator<Buffer, void, unknown> | undefined;
+  readonly port: WebSerialPortLike;
 
-  /**
-   * Creates an unopened connection for an authorized Web Serial port and
-   * subscribes to the port's browser `disconnect` event.
-   *
-   * @param options - Options containing the Web Serial port to use.
-   */
-  constructor(
-    { port }: WebSerialConnectionOptions = {} as WebSerialConnectionOptions,
-  ) {
+  private writer: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  private reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  private aborter: AbortController | undefined;
+  private readTask: Promise<void> | undefined;
+  private connectPromise: Promise<void> | undefined;
+  private closePromise: Promise<void> | undefined;
+  private connected = false;
+  private closed = false;
+  private writeQueue: Promise<void> = Promise.resolve();
+  private readonly onNativeDisconnect = () => {
+    if (!this.connected) return;
+    this.connected = false;
+    this.emit(
+      "disconnect",
+      new DisconnectedError("The browser reported a serial disconnection"),
+    );
+  };
+
+  constructor({ port }: WebSerialConnectionOptions) {
     super();
+    if (!port) throw new TypeError("A Web Serial port is required");
     this.port = port;
-    port.addEventListener("disconnect", this.onDisconnect.bind(this));
+    port.addEventListener("disconnect", this.onNativeDisconnect);
   }
 
-  /**
-   * Gets previously authorized Web Serial ports, or asks the browser to let
-   * the user authorize one when none are available.
-   *
-   * The browser chooser is filtered to USB vendor IDs `0x2ec2` (Loupedeck) and
-   * `0x1532` (Razer). Requesting a port requires browser Web Serial support and
-   * is subject to the browser's secure-context and user-activation rules.
-   * Discovery does not open the returned ports.
-   *
-   * @returns Descriptions of authorized or newly selected ports.
-   * @throws Rejects if Web Serial is unavailable, the user cancels or the
-   * browser denies the request, or port information cannot be read.
-   */
+  /** List already-authorized supported ports without displaying a chooser. */
   static async discover(): Promise<WebSerialConnectionInfo[]> {
-    // Return authorized ports if available
-    const ports = await navigator.serial.getPorts();
-    if (!ports.length) {
-      // Request a new port
-      ports.push(
-        await navigator.serial.requestPort({
-          filters: [{ usbVendorId: 0x2ec2 }, { usbVendorId: 0x1532 }],
-        }),
-      );
-    }
+    if (!navigator.serial)
+      throw new NotConnectedError("Web Serial is unavailable");
     const connections: WebSerialConnectionInfo[] = [];
-    for (const port of ports) {
+    for (const port of await navigator.serial.getPorts()) {
       const info = await port.getInfo();
+      if (
+        info.usbVendorId === undefined ||
+        info.usbProductId === undefined ||
+        !VENDOR_IDS.includes(info.usbVendorId)
+      ) {
+        continue;
+      }
       connections.push({
-        connectionType: this,
+        kind: "web-serial",
         port,
         productId: info.usbProductId,
         vendorId: info.usbVendorId,
@@ -206,157 +98,253 @@ export default class LoupedeckWebSerialConnection extends EventEmitter<WebSerial
     return connections;
   }
 
-  /**
-   * Aborts the read pipeline and closes the Web Serial port.
-   *
-   * The method waits for `readEnd`, initiates closing and releases the writer,
-   * then allows the `pipeThrough()` reader lock a tick to clear before calling
-   * the port's `close()` method. It expects an active connection.
-   *
-   * @returns Resolves after the port has closed.
-   * @throws Rejects if closing the port fails; calling this without an active
-   * connection also fails because the abort controller and writer are absent.
-   */
-  async close(): Promise<void> {
-    this.aborter!.abort("Manual close initiated");
-    await new Promise<void>((res) => this.on("readEnd", res));
-    this.writer!.close();
-    this.writer!.releaseLock();
-    // Without the line below, the serialport will refuse to close with
-    // "TypeError: Failed to execute 'close': Cannot cancel a locked stream"
-    //
-    // However, the port.readable stream should have been unlocked via reader.releaseLock() (see read() above)
-    //
-    // Apparently it unlocks after a one tick propagation (due to pipeThrough()), but there doesn't
-    // seem to be a promise anywhere to await this happening...
-    //
-    // Annoyingly, we have to wait one tick here which is really hacky
-    await new Promise((res) => setTimeout(res, 10));
-    await this.port.close();
-  }
-
-  /**
-   * Opens the port when necessary, performs the serial WebSocket-upgrade
-   * handshake, and starts the background frame-reading loop.
-   *
-   * A raw upgrade request is sent after acquiring the port's reader and
-   * writer. The response must start with `HTTP/1.1`. On success, the handshake
-   * reader is released, an abortable parsing pipeline is installed, and
-   * `connect` is emitted before background reading begins.
-   *
-   * @returns Resolves once the handshake and read-pipeline setup complete.
-   * @throws Rejects if the port cannot open, stream setup fails, or the
-   * handshake response is invalid.
-   */
-  async connect(): Promise<void> {
-    if (!this.isReady()) {
-      await this.port.open({ baudRate: 256000 });
+  /** Display the browser chooser. Call this from a user-activation handler. */
+  static async request(): Promise<WebSerialConnectionInfo> {
+    if (!navigator.serial)
+      throw new NotConnectedError("Web Serial is unavailable");
+    const port = await navigator.serial.requestPort({
+      filters: VENDOR_IDS.map((usbVendorId) => ({ usbVendorId })),
+    });
+    const info = await port.getInfo();
+    if (info.usbVendorId === undefined || info.usbProductId === undefined) {
+      throw new ProtocolError(
+        "The selected port did not expose USB identifiers",
+      );
     }
-
-    const reader = this.port.readable!.getReader();
-    this.writer = this.port.writable!.getWriter();
-
-    // Wait for the "websocket" handshake over serial (...)
-    const nextMessage = reader.read();
-    this.send(Buffer.from(WS_UPGRADE_HEADER), true);
-    const { value: response } = await nextMessage;
-    const stringResponse = new TextDecoder().decode(response);
-    if (!stringResponse.startsWith(WS_UPGRADE_RESPONSE))
-      throw new Error(`Invalid handshake response: ${stringResponse}`);
-    reader.releaseLock();
-
-    // Set up data pipeline
-    this.aborter = new AbortController();
-    this.readStream = read(this.port, this.aborter);
-    this.emit("connect", { address: "web" });
-    this.read();
+    return {
+      kind: "web-serial",
+      port,
+      productId: info.usbProductId,
+      vendorId: info.usbVendorId,
+    };
   }
 
-  /**
-   * Reports readiness using the browser port's readable stream.
-   *
-   * This reflects whether the port is open, not whether the protocol handshake
-   * has completed.
-   *
-   * @returns The port's readable stream when open, otherwise `null`.
-   */
-  isReady(): ReadableStream<Uint8Array> | null {
-    return this.port && this.port.readable;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    if (this.closed) return Promise.resolve();
+    this.closed = true;
+    const wasConnected = this.connected;
+    this.connected = false;
+    this.aborter?.abort(new DeviceClosedError());
+    this.port.removeEventListener("disconnect", this.onNativeDisconnect);
+
+    this.closePromise = (async () => {
+      await this.reader?.cancel().catch(() => {});
+      await this.readTask;
+      await this.writeQueue;
+      if (this.writer) {
+        try {
+          await this.writer.close();
+        } catch {
+          this.writer.abort().catch(() => {});
+        } finally {
+          this.writer.releaseLock();
+          this.writer = undefined;
+        }
+      }
+      if (this.port.readable || this.port.writable) await this.port.close();
+      if (wasConnected) this.emit("disconnect", undefined);
+    })();
+    return this.closePromise;
   }
 
-  /**
-   * Forwards a browser disconnect event or serial error as `disconnect`.
-   *
-   * @param err - Browser event or error describing the disconnect.
-   */
-  onDisconnect(err: Event | Error): void {
-    // TODO
-    this.emit("disconnect", err);
+  connect(options: TransportConnectOptions = {}): Promise<void> {
+    if (this.closed) return Promise.reject(new DeviceClosedError());
+    if (this.isReady()) return Promise.resolve();
+    if (this.connectPromise) return this.connectPromise;
+    const controller = new AbortController();
+    this.aborter = controller;
+    const abort = () => {
+      controller.abort(options.signal?.reason);
+      void this.reader?.cancel().catch(() => {});
+    };
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+
+    const promise = this.open({
+      ...options,
+      signal: controller.signal,
+    }).finally(() => {
+      options.signal?.removeEventListener("abort", abort);
+      this.connectPromise = undefined;
+    });
+    this.connectPromise = promise;
+    return promise;
   }
 
-  /**
-   * Logs a serial error and forwards it to {@link onDisconnect}.
-   *
-   * @param err - Serial error to report.
-   */
-  onError(err: Error): void {
-    // TODO
-    console.error(`Loupedeck Serial Error: ${err.message}`);
-    this.onDisconnect(err);
-  }
-
-  /**
-   * Consumes the parsed read stream, emitting each payload as `message` while
-   * the port remains readable, and emits `readEnd` when iteration finishes.
-   *
-   * {@link connect} starts this loop without awaiting it.
-   *
-   * @returns Resolves after the read stream ends and `readEnd` is emitted.
-   * @throws Rejects if called before {@link connect} initializes the read stream.
-   */
-  async read(): Promise<void> {
-    for await (const message of this.readStream!) {
-      if (!this.port.readable) break;
-      this.emit("message", message);
+  private async open({
+    signal,
+    timeoutMs = 3000,
+  }: TransportConnectOptions): Promise<void> {
+    if (signal?.aborted) {
+      throw new OperationAbortedError(undefined, { cause: signal.reason });
     }
-    this.emit("readEnd");
+    let handshakeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      if (!this.port.readable || !this.port.writable) {
+        await this.port.open({ baudRate: 256000 });
+      }
+      if (!this.port.readable || !this.port.writable) {
+        throw new NotConnectedError("Web Serial streams are unavailable");
+      }
+      this.writer = this.port.writable.getWriter();
+      handshakeReader = this.port.readable.getReader();
+      this.reader = handshakeReader;
+
+      const responsePromise = readHandshake(handshakeReader, signal, timeoutMs);
+      await this.writeRaw(encodeText(WS_UPGRADE_HEADER));
+      const remainder = await responsePromise;
+      handshakeReader.releaseLock();
+      this.reader = undefined;
+      handshakeReader = undefined;
+
+      this.connected = true;
+      this.emit("connect", { address: "web" });
+      this.readTask = this.readLoop(remainder, signal);
+    } catch (error) {
+      this.connected = false;
+      if (handshakeReader) {
+        await handshakeReader.cancel().catch(() => {});
+        handshakeReader.releaseLock();
+        this.reader = undefined;
+      }
+      if (this.writer) {
+        await this.writer.abort(error).catch(() => {});
+        this.writer.releaseLock();
+        this.writer = undefined;
+      }
+      if (this.port.readable || this.port.writable) {
+        await this.port.close().catch(() => {});
+      }
+      throw error;
+    }
   }
 
-  /**
-   * Writes a payload to the Web Serial port.
-   *
-   * By default, the payload is preceded by a six-byte header for payloads up to
-   * 255 bytes or a 14-byte header for larger payloads. Both headers start with
-   * `0x82`. Small headers store `0x80 + payload length` in byte 1; large headers
-   * use `0xff` there and store the payload length as a big-endian 32-bit integer
-   * at offset 6. Raw sends write only `buff`.
-   *
-   * @param buff - Payload bytes to write.
-   * @param raw - Whether to bypass protocol framing and write only `buff`.
-   * Defaults to `false`.
-   * @returns A promise for the payload write. The header write, when present,
-   * is initiated first but not separately awaited.
-   * @throws Throws if called before {@link connect} initializes the writer.
-   * The returned promise rejects if the payload write fails.
-   */
-  send(buff: Buffer, raw = false): Promise<void> {
+  isReady(): boolean {
+    return (
+      this.connected &&
+      !this.closed &&
+      this.port.readable !== null &&
+      this.port.writable !== null
+    );
+  }
+
+  private async readLoop(
+    initialData: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const decoder = new MagicByteLengthDecoder(0x82);
+    let failure: Error | undefined;
+    try {
+      for (const frame of decoder.push(initialData))
+        this.emit("message", frame);
+      const reader = this.port.readable!.getReader();
+      this.reader = reader;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          for (const frame of decoder.push(value)) this.emit("message", frame);
+        }
+      }
+      if (!this.closed) decoder.finish();
+    } catch (error) {
+      if (!this.closed && !signal?.aborted) {
+        failure = asError(error, "Web Serial read failed");
+      }
+    } finally {
+      this.reader?.releaseLock();
+      this.reader = undefined;
+      this.connected = false;
+      if (failure) {
+        if (this.writer) {
+          await this.writer.abort(failure).catch(() => {});
+          this.writer.releaseLock();
+          this.writer = undefined;
+        }
+        if (this.port.readable || this.port.writable) {
+          await this.port.close().catch(() => {});
+        }
+        this.emit("disconnect", failure);
+      } else if (!this.closed) {
+        this.emit("disconnect", undefined);
+      }
+    }
+  }
+
+  send(buff: Uint8Array, raw = false): Promise<void> {
+    const operation = this.writeQueue.then(() => this.sendOrdered(buff, raw));
+    this.writeQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  private async sendOrdered(buff: Uint8Array, raw: boolean): Promise<void> {
+    if (!raw && !this.isReady()) throw new NotConnectedError();
     if (!raw) {
-      let prep: Buffer;
-      // Large messages
+      let prep: Uint8Array;
       if (buff.length > 0xff) {
-        prep = Buffer.alloc(14);
+        prep = new Uint8Array(14);
         prep[0] = 0x82;
         prep[1] = 0xff;
-        prep.writeUInt32BE(buff.length, 6);
-        // Small messages
+        writeUint32BE(prep, buff.length, 6);
       } else {
-        // Prepend each message with a send indicating the length to come
-        prep = Buffer.alloc(6);
+        prep = new Uint8Array(6);
         prep[0] = 0x82;
         prep[1] = 0x80 + buff.length;
       }
-      this.writer!.write(prep);
+      await this.writeRaw(prep);
     }
-    return this.writer!.write(buff);
+    await this.writeRaw(buff);
+  }
+
+  private async writeRaw(buff: Uint8Array): Promise<void> {
+    if (!this.writer) throw new NotConnectedError();
+    await this.writer.write(buff);
+  }
+}
+
+async function readHandshake(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<Uint8Array> {
+  let data: Uint8Array = new Uint8Array();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(new ConnectionTimeoutError("Web Serial handshake timed out")),
+      timeoutMs,
+    );
+  });
+  const reading = (async () => {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        throw new OperationAbortedError(
+          "Web Serial stream ended during handshake",
+          { cause: signal?.reason },
+        );
+      }
+      if (value) data = concatBytes(data, value);
+      const prefix = data.subarray(0, WS_UPGRADE_RESPONSE.length);
+      if (
+        data.length > MAX_HANDSHAKE_BYTES ||
+        (prefix.length === WS_UPGRADE_RESPONSE.length &&
+          decodeText(prefix) !== WS_UPGRADE_RESPONSE)
+      ) {
+        throw new ProtocolError("Invalid Web Serial handshake response");
+      }
+      for (let index = 0; index + 1 < data.length; index++) {
+        if (data[index] === 10 && data[index + 1] === 10) {
+          return data.subarray(index + 2);
+        }
+      }
+    }
+  })();
+  try {
+    return await Promise.race([reading, timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }

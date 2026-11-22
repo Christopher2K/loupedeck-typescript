@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { discover } from "../../dist/index.js";
+import { discover, HAPTIC } from "../../dist/index.js";
 
 let loupedeck;
 while (!loupedeck) {
@@ -12,17 +12,20 @@ while (!loupedeck) {
 }
 let brightness = 1;
 let vibration = 0;
+let colorInterval;
 
 loupedeck.on("connect", async ({ address }) => {
   console.info(`✅ Connected to ${loupedeck.type} at ${address}`);
   const { serial, version } = await loupedeck.getInfo();
   console.info(`Device serial number ${serial}, software version ${version}`);
-  loupedeck.setBrightness(1);
+  await loupedeck.setBrightness(1);
   await drawKeyColors(loupedeck);
+  clearInterval(colorInterval);
   if (loupedeck.buttons.length) cycleColors(loupedeck);
 });
 
 loupedeck.on("disconnect", (err) => {
+  clearInterval(colorInterval);
   if (!err) return;
   console.info(
     `Connection to Loupedeck lost (${err?.message}). Reconnecting in ${loupedeck.reconnectInterval / 1000}s...`,
@@ -48,9 +51,12 @@ loupedeck.on("rotate", ({ id, delta }) => {
   }
   // Test vibrations with top left knob
   if (id === "knobTL") {
-    vibration = Math.min(0xff, Math.max(0, vibration + delta));
+    vibration = Math.max(0, vibration + delta);
     console.log(`Testing vibration #${vibration}`);
-    loupedeck.vibrate(vibration);
+    const patterns = Object.values(HAPTIC);
+    loupedeck
+      .vibrate(patterns[vibration % patterns.length])
+      .catch(console.error);
   }
   // Rotate graphic with CT dial (Loupedeck CT only)
   if (id === "knobCT") {
@@ -82,12 +88,14 @@ loupedeck.on("touchend", ({ changedTouches: [touch] }) => {
 // Cycle through random button colors
 function cycleColors(device) {
   let idx = 0;
-  setInterval(() => {
+  colorInterval = setInterval(() => {
     const id = device.buttons[idx];
     const r = Math.round(Math.random() * 255);
     const g = Math.round(Math.random() * 255);
     const b = Math.round(Math.random() * 255);
-    device.setButtonColor({ id, color: `rgba(${r}, ${g}, ${b})` });
+    device
+      .setButtonColor({ id, color: `rgba(${r}, ${g}, ${b})` })
+      .catch(console.error);
     idx = (idx + 1) % device.buttons.length;
   }, 100);
 }
@@ -125,7 +133,7 @@ async function drawKeyColors(device) {
     "#c9c",
     "#d89",
   ];
-  for (let i = 0; i < device.rows * device.columns; i++) {
+  for (let i = 0; i < device.capabilities.keyCount; i++) {
     await device.drawKey(i, (ctx, w, h) => {
       ctx.fillStyle = colors[i % colors.length];
       ctx.fillRect(0, 0, w, h);
@@ -151,7 +159,10 @@ async function drawKeyColors(device) {
   }
 }
 
+await loupedeck.connect();
+
 async function shutdown() {
+  clearInterval(colorInterval);
   await loupedeck.close();
   process.exit(0);
 }

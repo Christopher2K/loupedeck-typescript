@@ -18,6 +18,8 @@ device.on("disconnect", (err) => {
   );
 });
 
+await device.connect();
+
 class SlidePuzzle {
   constructor({ image, rows = 3, columns = 4, offset = [0, 0] }) {
     this.onStart = () => {};
@@ -269,9 +271,11 @@ device.on("rotate", async ({ id, delta }) => {
   if (id[4] === "T") direction[1] = -delta * MOVE_SPEED;
   else direction[0] = delta * MOVE_SPEED;
 
-  await game.moveTile(direction, preMove, postMove);
-
-  mutex = false;
+  try {
+    await game.moveTile(direction, preMove, postMove);
+  } finally {
+    mutex = false;
+  }
 });
 
 // Reset the game when circle pressed
